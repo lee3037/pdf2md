@@ -1,16 +1,21 @@
 import type { ReactNode } from "react"
-import { RefreshCw } from "lucide-react"
+import { RefreshCw, RotateCcw } from "lucide-react"
 
-import type { ChunkOptions, ContextMode, TableMode } from "@/lib/api"
+import type { ChunkOptions, ContextMode, ConvertOptions, OcrMode, TableMode } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { HaloInput } from "@/components/ui/halo-input"
 import { HaloSegmented } from "@/components/ui/halo-segmented"
 import { HaloSwitch } from "@/components/ui/halo-switch"
 
 interface SettingsRailProps {
+  convert: ConvertOptions
+  onConvert: (o: ConvertOptions) => void
+  /** 识别参数与当前结果不一致：可用同一文件重新转换 */
+  reconvertable: boolean
+  onReconvert: () => void
   value: ChunkOptions
   onChange: (o: ChunkOptions) => void
-  /** 有手动编辑时参数改动不自动应用，显示覆盖按钮 */
+  /** 有手动编辑时分块参数改动不自动应用，显示覆盖按钮 */
   pendingOverwrite: boolean
   busy: boolean
   onApply: () => void
@@ -25,13 +30,63 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
+function SwitchRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex cursor-pointer items-center justify-between text-sm">
+      {label}
+      <HaloSwitch checked={checked} onCheckedChange={onChange} size="sm" />
+    </label>
+  )
+}
+
 const num = (v: string, fallback: number) => (v.trim() === "" ? fallback : Math.max(0, Math.round(Number(v) || 0)))
 
-export function SettingsRail({ value, onChange, pendingOverwrite, busy, onApply }: SettingsRailProps) {
-  const set = <K extends keyof ChunkOptions>(k: K, v: ChunkOptions[K]) => onChange({ ...value, [k]: v })
+export function SettingsRail(props: SettingsRailProps) {
+  const { convert, value } = props
+  const setConvert = <K extends keyof ConvertOptions>(k: K, v: ConvertOptions[K]) =>
+    props.onConvert({ ...convert, [k]: v })
+  const set = <K extends keyof ChunkOptions>(k: K, v: ChunkOptions[K]) => props.onChange({ ...value, [k]: v })
 
   return (
     <aside className="flex flex-col gap-6 overflow-y-auto border-border/60 border-r px-5 py-6">
+      <Field label="OCR">
+        <HaloSegmented
+          className="w-full"
+          items={[
+            { value: "auto", label: "自动" },
+            { value: "force", label: "全部" },
+            { value: "off", label: "关闭" },
+          ]}
+          onValueChange={(v) => setConvert("ocr_mode", v as OcrMode)}
+          value={convert.ocr_mode}
+        />
+        {convert.ocr_mode !== "off" && (
+          <HaloSegmented
+            className="w-full"
+            items={[
+              { value: "150", label: "150 dpi" },
+              { value: "200", label: "200 dpi" },
+              { value: "300", label: "300 dpi" },
+            ]}
+            onValueChange={(v) => setConvert("ocr_dpi", Number(v))}
+            value={String(convert.ocr_dpi)}
+          />
+        )}
+        <SwitchRow
+          checked={convert.remove_header_footer}
+          label="去页眉页脚"
+          onChange={(v) => setConvert("remove_header_footer", v)}
+        />
+        {props.reconvertable && (
+          <Button disabled={props.busy} onClick={props.onReconvert} variant="outline">
+            <RotateCcw />
+            重新转换
+          </Button>
+        )}
+      </Field>
+
+      <hr className="border-border/60" />
+
       <Field label="分隔符">
         <HaloInput
           className="font-mono"
@@ -70,10 +125,7 @@ export function SettingsRail({ value, onChange, pendingOverwrite, busy, onApply 
           onValueChange={(v) => set("context", v as ContextMode)}
           value={value.context}
         />
-        <label className="flex cursor-pointer items-center justify-between text-sm">
-          来源页码
-          <HaloSwitch checked={value.include_pages} onCheckedChange={(v) => set("include_pages", v)} size="sm" />
-        </label>
+        <SwitchRow checked={value.include_pages} label="来源页码" onChange={(v) => set("include_pages", v)} />
       </Field>
 
       <Field label="表格">
@@ -95,9 +147,9 @@ export function SettingsRail({ value, onChange, pendingOverwrite, busy, onApply 
         />
       </Field>
 
-      {pendingOverwrite && (
-        <Button className="mt-auto" disabled={busy} onClick={onApply} variant="destructive">
-          <RefreshCw className={busy ? "animate-spin" : undefined} />
+      {props.pendingOverwrite && (
+        <Button className="mt-auto" disabled={props.busy} onClick={props.onApply} variant="destructive">
+          <RefreshCw className={props.busy ? "animate-spin" : undefined} />
           覆盖编辑并应用
         </Button>
       )}

@@ -18,16 +18,17 @@ with sync_playwright() as p:
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
     page.goto(BASE)
-    page.screenshot(path=str(OUT / "1_landing.png"))
+    page.screenshot(path=str(OUT / "1_empty.png"))
+    checks["空白时不可下载"] = page.locator("button:has-text('下载 .md')").is_disabled()
 
-    # 拖入即转换
-    page.set_input_files("input[type=file]", str(SAMPLE))
+    # 选择即转换
+    page.set_input_files("input[type=file] >> nth=0", str(SAMPLE))
     page.wait_for_selector("article", timeout=180000)
     time.sleep(0.8)
     page.screenshot(path=str(OUT / "2_chunks.png"))
     n0 = page.locator("article").count()
 
-    rail = page.locator("aside input")
+    rail = page.locator("aside input:not([type=checkbox])")
     # 改最大字数 → 自动重新分块
     rail.nth(2).fill("400")
     time.sleep(2)
@@ -67,6 +68,25 @@ with sync_playwright() as p:
     page.click("article >> nth=1 >> header button >> nth=0")
     time.sleep(0.5)
     checks["页码跳转"] = "#page=" in (page.get_attribute("iframe", "src") or "")
+
+    # 改识别参数 → 出现“重新转换”，确认后用同一文件重新转换
+    page.click("aside >> text=全部")
+    time.sleep(0.3)
+    checks["重新转换按钮"] = page.locator("text=重新转换").count() == 1
+    page.once("dialog", lambda d: d.accept())
+    page.click("text=重新转换")
+    page.wait_for_selector("[role=progressbar]", timeout=10000)
+    page.screenshot(path=str(OUT / "4_converting.png"))
+    page.wait_for_selector("article", timeout=180000)
+    checks["重新转换完成"] = page.locator("text=重新转换").count() == 0
+    page.click("aside >> text=自动")
+
+    # 顶栏换文件：未下载的结果先确认
+    page.once("dialog", lambda d: d.accept())
+    page.set_input_files("input[type=file] >> nth=0", str(SAMPLE.with_name("two_column.pdf")))
+    page.wait_for_function("document.querySelector('h1')?.textContent.includes('two_column')", timeout=180000)
+    page.wait_for_selector("article", timeout=180000)
+    checks["顶栏换文件"] = True
     browser.close()
 
 for k, v in checks.items():
