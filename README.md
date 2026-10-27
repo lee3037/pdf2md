@@ -9,7 +9,7 @@
 ./run.sh 9000       # 指定端口
 ```
 
-浏览器打开 `http://<服务器>:8000/`：上传 PDF → 开始转换 → 在右侧"分块效果"中检查 → 需要时在左侧编辑 → 下载 `.md`。
+浏览器打开 `http://<服务器>:8000/`，拖入 PDF 即开始转换。完成后在"分块"视图逐块检查（可直接编辑、合并、删除，点击页码对照原文），左侧调整分块参数会自动重新分块，最后下载 `.md`。
 
 导入 FastGPT：新建/打开知识库 → 文本数据集 → 本地文件导入 `.md` → 处理方式选"直接分块"，分块模式选"自定义分隔符"，填入与本工具一致的分隔符（默认 `===CHUNK===`）。FastGPT 的"最大分块大小"应不小于本工具的"最大字数"，否则块会被二次截断。
 
@@ -86,7 +86,8 @@ app/
   chunker.py    章节分块、上下文、分隔符拼接
   pipeline.py   转换流水线（分批并行）
   server.py     FastAPI 服务与任务管理
-static/         前端页面（原生 JS，marked.js 已内置）
+web/            前端源码（React + Tailwind + shadcn，组件来自 cult-ui）
+static/         前端构建产物（已提交，运行时无需 Node）
 tests/
   make_samples.py  生成测试 PDF（文本型/复杂表格/双栏/扫描型）
   run_sample.py    命令行转换：python tests/run_sample.py a.pdf max_chars=800 table_mode=kv
@@ -95,6 +96,18 @@ tests/
 ```
 
 运行测试：`.venv/bin/python -m pytest tests -q`（扫描件用例较慢，可加 `-m "not slow"`）。
+
+## 前端开发
+
+前端位于 `web/`，组件通过 shadcn CLI 从 [cult-ui](https://www.cult-ui.com/docs) 注册表引入（`components.json` 中的 `@cult-ui`），源码在 `web/src/components/ui/`，可直接修改。
+
+```bash
+cd web
+pnpm install
+pnpm dev            # 开发服务器，/api 代理到 http://localhost:8765（可用 PDF2MD_API 指定）
+pnpm build          # 构建到 ../static，修改前端后需重新构建并提交
+pnpm dlx shadcn@latest add @cult-ui/<组件名>   # 引入新的 cult-ui 组件
+```
 
 ## 已知局限
 

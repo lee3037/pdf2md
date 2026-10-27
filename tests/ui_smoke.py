@@ -1,4 +1,4 @@
-"""浏览器端冒烟测试（需另装 playwright）：python tests/ui_smoke.py [http://localhost:8000/] [输出目录]"""
+"""浏览器端冒烟测试（需另装 playwright）：python tests/ui_smoke.py [http://localhost:8000/] [截图目录]"""
 import sys
 import time
 from pathlib import Path
@@ -11,59 +11,65 @@ OUT.mkdir(parents=True, exist_ok=True)
 SAMPLE = Path(__file__).resolve().parents[1] / "samples" / "complex_cn.pdf"
 
 errors = []
+checks = {}
 with sync_playwright() as p:
     browser = p.chromium.launch()
-    page = browser.new_page(viewport={"width": 1500, "height": 950}, accept_downloads=True)
+    page = browser.new_page(viewport={"width": 1440, "height": 900}, accept_downloads=True)
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
     page.goto(BASE)
-    print("默认分隔符:", page.input_value("#separator"), "最大字数:", page.input_value("#max_chars"))
+    page.screenshot(path=str(OUT / "1_landing.png"))
 
-    page.set_input_files("#file", str(SAMPLE))
-    page.click("#btn-convert")
-    page.wait_for_selector(".chunk", timeout=180000)
-    time.sleep(0.5)
-    print("进度:", page.inner_text("#progress-text"))
-    print("块数:", page.inner_text("#chunk-count"))
-    print("统计:", page.inner_text("#stats").replace("\n", " "))
-    page.screenshot(path=str(OUT / "1_chunks.png"))
+    # 拖入即转换
+    page.set_input_files("input[type=file]", str(SAMPLE))
+    page.wait_for_selector("article", timeout=180000)
+    time.sleep(0.8)
+    page.screenshot(path=str(OUT / "2_chunks.png"))
+    n0 = page.locator("article").count()
 
-    # 只改分隔符：编辑器内直接替换
-    page.fill("#separator", "@@@@@@")
-    page.click("#btn-rechunk")
-    time.sleep(0.5)
-    text = page.input_value("#editor")
-    print("分隔符已替换:", "@@@@@@" in text and "===CHUNK===" not in text, "块数:", page.inner_text("#chunk-count"))
+    rail = page.locator("aside input")
+    # 改最大字数 → 自动重新分块
+    rail.nth(2).fill("400")
+    time.sleep(2)
+    checks["自动重新分块"] = page.locator("article").count() > n0
 
-    # 手工编辑后分块视图实时更新
-    page.evaluate("""() => { const e = document.querySelector('#editor');
-        e.value += '\\n\\n@@@@@@\\n\\n手工新增的一块内容'; e.dispatchEvent(new Event('input')); }""")
-    time.sleep(0.6)
-    print("编辑后块数:", page.inner_text("#chunk-count"), page.inner_text("#edit-state"))
-
-    # 修改其他参数 → 服务端重新分块（确认覆盖手工修改）
-    page.once("dialog", lambda d: d.accept())
-    page.select_option("#table_mode", "kv")
-    page.fill("#max_chars", "600")
-    page.click("#btn-rechunk")
-    time.sleep(1)
-    print("重新分块后块数:", page.inner_text("#chunk-count"), "键值表格:", "部门：研发部" in page.input_value("#editor"))
-
-    page.click(".tab[data-tab=preview]")
+    # 编辑卡片
+    page.hover("article >> nth=0")
+    page.click("article >> nth=0 >> button[aria-label=编辑]")
+    page.keyboard.press("Control+End")
+    page.keyboard.type("手工补充的一句话。")
+    page.keyboard.press("Control+Enter")
     time.sleep(0.4)
-    page.screenshot(path=str(OUT / "2_preview.png"))
+    checks["卡片编辑"] = "手工补充的一句话" in page.locator("article >> nth=0").inner_text()
+
+    # 改分隔符 → 直接替换，保留编辑
+    rail.nth(0).fill("@@@")
+    time.sleep(0.8)
+    page.click("text=Markdown")
+    md = page.locator("textarea").input_value()
+    checks["分隔符替换"] = "@@@" in md and "===CHUNK===" not in md and "手工补充的一句话" in md
+
+    # 有编辑时改参数 → 需确认覆盖
+    rail.nth(2).fill("600")
+    time.sleep(0.8)
+    checks["覆盖提示"] = page.locator("text=覆盖编辑并应用").count() == 1
+
+    page.click("text=预览")
+    time.sleep(0.4)
+    page.screenshot(path=str(OUT / "3_preview.png"))
 
     with page.expect_download() as dl:
-        page.click("#btn-download")
+        page.click("text=下载 .md")
     dl.value.save_as(str(OUT / "out.md"))
-    print("下载文件:", dl.value.suggested_filename)
+    checks["下载"] = dl.value.suggested_filename == "complex_cn.md" and "@@@" in (OUT / "out.md").read_text()
 
-    page.click(".tab[data-tab=chunks]")
-    page.click(".chunk .pages >> nth=1")
-    time.sleep(1)
-    print("PDF 跳转:", page.get_attribute("#pdf-frame", "src"))
-    page.screenshot(path=str(OUT / "3_pdf.png"))
+    page.click("text=分块")
+    page.click("article >> nth=1 >> header button >> nth=0")
+    time.sleep(0.5)
+    checks["页码跳转"] = "#page=" in (page.get_attribute("iframe", "src") or "")
     browser.close()
 
+for k, v in checks.items():
+    print(("✓" if v else "✗"), k)
 print("页面错误:", errors or "无")
-sys.exit(1 if errors else 0)
+sys.exit(0 if all(checks.values()) and not errors else 1)

@@ -1,121 +1,14 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PDF → FastGPT 知识库 Markdown</title>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-<header class="topbar">
-  <h1>PDF → FastGPT 知识库 Markdown</h1>
-  <span class="sub">上传 PDF，自动识别结构、合并跨页表格、按章节分块并插入分隔符</span>
-</header>
-
-<div class="layout">
-  <aside class="sidebar">
-    <section class="panel">
-      <h2>1. 上传 PDF</h2>
-      <label id="dropzone" class="dropzone">
-        <input id="file" type="file" accept="application/pdf,.pdf" hidden>
-        <svg class="dz-icon" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9 15l3-3 3 3"/></svg>
-        <div id="dz-text">点击选择或拖拽 PDF 到这里</div>
-      </label>
-      <details class="opts">
-        <summary>转换设置</summary>
-        <label>OCR 识别
-          <select id="ocr_mode">
-            <option value="auto">自动（无文字层/乱码页才识别）</option>
-            <option value="force">强制所有页 OCR</option>
-            <option value="off">关闭</option>
-          </select>
-        </label>
-        <label>OCR 清晰度
-          <select id="ocr_dpi">
-            <option value="150">快速（150 dpi）</option>
-            <option value="200">标准（200 dpi）</option>
-            <option value="300">高精度（300 dpi，较慢）</option>
-          </select>
-        </label>
-        <label class="check"><input id="remove_header_footer" type="checkbox" checked> 去除页眉、页脚和页码</label>
-      </details>
-      <button id="btn-convert" class="primary" disabled>开始转换</button>
-      <div id="progress" class="progress hidden">
-        <div class="bar"><div id="progress-bar"></div></div>
-        <div id="progress-text" class="muted"></div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h2>2. 分块设置</h2>
-      <label>分隔符
-        <input id="separator" type="text" spellcheck="false">
-      </label>
-      <div class="chips" id="sep-presets">
-        <button type="button" data-sep="===CHUNK===">===CHUNK===</button>
-        <button type="button" data-sep="&lt;!--split--&gt;">&lt;!--split--&gt;</button>
-        <button type="button" data-sep="@@@@@@">@@@@@@</button>
-      </div>
-      <div class="row2">
-        <label>最大字数<input id="max_chars" type="number" min="100" step="50"></label>
-        <label>最小字数<input id="min_chars" type="number" min="0" step="50"></label>
-      </div>
-      <label>块上下文
-        <select id="context">
-          <option value="breadcrumb">章节路径（一行面包屑）</option>
-          <option value="headings">重复上级标题（# 标题）</option>
-          <option value="none">不添加</option>
-        </select>
-      </label>
-      <label class="check"><input id="include_pages" type="checkbox" checked> 标注来源页码</label>
-      <div class="row2">
-        <label>表格格式
-          <select id="table_mode">
-            <option value="markdown">Markdown 表格</option>
-            <option value="kv">键值行（宽表推荐）</option>
-          </select>
-        </label>
-        <label>表格每块最多行<input id="table_max_rows" type="number" min="0" step="5" title="0 表示仅按字数拆分"></label>
-      </div>
-      <button id="btn-rechunk" disabled>应用分块设置</button>
-      <p class="hint">修改分隔符会直接替换编辑器中的旧分隔符，保留手工修改；其他分块参数需重新分块，会覆盖手工修改。</p>
-    </section>
-
-    <section class="panel" id="stats-panel">
-      <h2>3. 结果统计</h2>
-      <div id="stats" class="stats muted">尚未转换</div>
-      <ul id="warnings" class="warnings"></ul>
-    </section>
-  </aside>
-
-  <main class="main">
-    <div class="toolbar">
-      <div class="title" id="doc-title">未选择文件</div>
-      <div class="actions">
-        <button id="btn-copy" disabled>复制</button>
-        <button id="btn-download" class="primary" disabled>下载 .md</button>
-      </div>
-    </div>
-    <div class="workspace">
-      <div class="pane editor-pane">
-        <div class="pane-head">Markdown 编辑 <span id="edit-state" class="muted"></span></div>
-        <textarea id="editor" spellcheck="false" placeholder="转换结果会显示在这里，可直接编辑。"></textarea>
-      </div>
-      <div class="pane view-pane">
-        <div class="tabs">
-          <button class="tab active" data-tab="chunks">分块效果 <span id="chunk-count" class="badge"></span></button>
-          <button class="tab" data-tab="preview">渲染预览</button>
-          <button class="tab" data-tab="pdf">原 PDF</button>
-        </div>
-        <div class="tab-body" id="tab-chunks"><div id="chunks" class="chunks muted">暂无内容</div></div>
-        <div class="tab-body hidden" id="tab-preview"><article id="preview" class="markdown-body"></article></div>
-        <div class="tab-body hidden" id="tab-pdf"><iframe id="pdf-frame" title="原 PDF"></iframe></div>
-      </div>
-    </div>
-  </main>
-</div>
-
-<script src="vendor/marked.min.js"></script>
-<script src="app.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDF → FastGPT 知识库</title>
+    <script type="module" crossorigin src="./assets/index-Bl4p0GRV.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CxZr2Dhl.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
 </html>
