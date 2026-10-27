@@ -263,8 +263,9 @@ def _context_lines(ctx, pages, opts) -> list[str]:
     page_txt = f"页码：{_fmt_pages(pages)}" if opts.include_pages and pages else ""
     if opts.context == "breadcrumb":
         parts = []
-        if ctx:
-            parts.append("章节：" + " > ".join(t for _, t in ctx))
+        names = [t for i, (_, t) in enumerate(ctx) if i == 0 or t != ctx[i - 1][1]]
+        if names:
+            parts.append("章节：" + " > ".join(names))
         if page_txt:
             parts.append(page_txt)
         return ["> " + " ｜ ".join(parts)] if parts else []

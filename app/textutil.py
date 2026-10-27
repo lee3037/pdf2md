@@ -71,7 +71,7 @@ def join_lines(lines: list[str]) -> str:
             out += line
         else:
             out += " " + line
-    return _CJK_SPACE_RE.sub("", out)
+    return out
 
 
 def ends_sentence(text: str) -> bool:

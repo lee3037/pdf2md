@@ -11,15 +11,15 @@ def _clean_cell(value, ocr: bool) -> str:
     return join_lines([p for p in parts if p])
 
 
-def _drop_empty(rows: list[list[str]]) -> list[list[str]]:
+def _drop_empty(rows: list[list[str]], xs: list) -> tuple[list[list[str]], list]:
     rows = [r for r in rows if any(c for c in r)]
     if not rows:
-        return rows
+        return rows, xs
     keep = [j for j in range(len(rows[0])) if any(r[j] for r in rows)]
-    return [[r[j] for j in keep] for r in rows]
+    return [[r[j] for j in keep] for r in rows], [xs[j] for j in keep]
 
 
-def _merge_complementary_columns(rows: list[list[str]]) -> list[list[str]]:
+def _merge_complementary_columns(rows, xs):
     """相邻两列在每一行至多一个非空、且其中一列表头为空 → 视为被错误拆开的同一列。"""
     j = 0
     while rows and j < len(rows[0]) - 1:
@@ -30,24 +30,35 @@ def _merge_complementary_columns(rows: list[list[str]]) -> list[list[str]]:
             for r in rows:
                 r[j] = r[j] or r[j + 1]
                 del r[j + 1]
+            del xs[j + 1]
         else:
             j += 1
-    return rows
+    return rows, xs
 
 
-def _drop_duplicate_columns(rows: list[list[str]]) -> list[list[str]]:
+def _drop_duplicate_columns(rows, xs):
     j = 0
     while rows and j < len(rows[0]) - 1:
         if all(r[j] == r[j + 1] for r in rows):
             for r in rows:
                 del r[j + 1]
+            del xs[j + 1]
         else:
             j += 1
-    return rows
+    return rows, xs
 
 
 def _merge_header_rows(rows: list[list[str]]) -> list[list[str]]:
-    """两行表头（首行存在横向合并单元格）合并为一行：“上级 / 下级”。"""
+    """多行表头（存在横向合并单元格）合并为一行：“上级 / 下级”，最多合并 3 行。"""
+    for _ in range(2):
+        merged = _merge_two_header_rows(rows)
+        if merged is rows:
+            break
+        rows = merged
+    return rows
+
+
+def _merge_two_header_rows(rows: list[list[str]]) -> list[list[str]]:
     if len(rows) < 3:
         return rows
     h0, h1 = rows[0], rows[1]
@@ -68,21 +79,22 @@ def _merge_header_rows(rows: list[list[str]]) -> list[list[str]]:
     return [header] + rows[2:]
 
 
-def normalize_table(raw_rows, ocr: bool = False) -> dict | None:
-    """返回 {"header": [...], "rows": [[...]]}；无法构成表格时返回 None。"""
+def normalize_table(raw_rows, ocr: bool = False, col_x: list | None = None) -> dict | None:
+    """返回 {"header", "rows", "col_x"}；无法构成表格时返回 None。col_x 为各列左边界，用于跨页续表对齐。"""
     if not raw_rows:
         return None
     width = max(len(r) for r in raw_rows)
     rows = [[_clean_cell(c, ocr) for c in r] + [""] * (width - len(r)) for r in raw_rows]
-    rows = _drop_empty(rows)
+    xs = list(col_x) if col_x and len(col_x) == width else [None] * width
+    rows, xs = _drop_empty(rows, xs)
     if not rows:
         return None
-    rows = _merge_complementary_columns(rows)
-    rows = _drop_duplicate_columns(rows)
+    rows, xs = _merge_complementary_columns(rows, xs)
+    rows, xs = _drop_duplicate_columns(rows, xs)
     rows = _merge_header_rows(rows)
     if len(rows) < 2 or len(rows[0]) < 2:
         return None
-    return {"header": rows[0], "rows": rows[1:]}
+    return {"header": rows[0], "rows": rows[1:], "col_x": xs if all(x is not None for x in xs) else None}
 
 
 def table_as_text(raw_rows, ocr: bool = False) -> str:
@@ -100,26 +112,70 @@ def same_header(a: list[str], b: list[str]) -> bool:
     return len(a) == len(b) and all(strip_key(x) == strip_key(y) for x, y in zip(a, b))
 
 
+def _column_map(t1: dict, t2: dict) -> list[int] | None:
+    """t2 每列对应 t1 的哪一列。列数相同直接一一对应；否则按列左边界就近对齐（须单调且不重复）。"""
+    n1, n2 = len(t1["header"]), len(t2["header"])
+    if n1 == n2:
+        return list(range(n1))
+    x1, x2 = t1.get("col_x"), t2.get("col_x")
+    if not x1 or not x2 or n2 > n1:
+        return None
+    mapping = []
+    for x in x2:
+        j = min(range(n1), key=lambda k: abs(x1[k] - x))
+        if abs(x1[j] - x) > 12 or (mapping and j <= mapping[-1]):
+            return None
+        mapping.append(j)
+    return mapping
+
+
 def can_merge(t1: dict, t2: dict) -> bool:
-    return len(t1["header"]) == len(t2["header"])
+    return _column_map(t1, t2) is not None
 
 
 def merge_tables(t1: dict, t2: dict) -> dict:
-    """把 t2 接到 t1 之后。t2 若重复了表头则去掉；t2 首行首列为空视为上一行跨页延续。
+    """把 t2（下一页的续表）接到 t1 之后。
+
+    - 列数不同时按列位置对齐；
+    - t2 若重复了表头则去掉；
+    - t2 首行多数格为空：视为上一行跨页断开，拼回上一行；
+    - t2 开头几行在“t1 中每行都有值”的列（如序号、类别等纵向合并列）为空：沿用上一行的值。
 
     row_pages 记录每一数据行的来源页码，用于分块后标注页码。
     """
-    rows2 = [t2["header"]] + t2["rows"]
+    mapping = _column_map(t1, t2)
+    n1 = len(t1["header"])
+
+    def align(row):
+        out = [""] * n1
+        for v, j in zip(row, mapping):
+            out[j] = v
+        return out
+
+    rows2 = [align(t2["header"])] + [align(r) for r in t2["rows"]]
     pages2 = [t2["row_pages"][0] if t2.get("row_pages") else None] + list(t2.get("row_pages") or [None] * len(t2["rows"]))
     if same_header(t1["header"], rows2[0]):
         rows2, pages2 = rows2[1:], pages2[1:]
     rows = list(t1["rows"])
     pages = list(t1.get("row_pages") or [None] * len(rows))
-    if rows and rows2 and not rows2[0][0] and any(rows2[0][1:]) and all(r[0] for r in rows):
-        last, cont = rows[-1], rows2[0]
-        rows[-1] = [join_lines([x, y]) if y and y != x else x for x, y in zip(last, cont)]
-        rows2, pages2 = rows2[1:], pages2[1:]
-    return {"header": t1["header"], "rows": rows + rows2, "row_pages": pages + pages2}
+    if rows and rows2:
+        first = rows2[0]
+        empties = sum(1 for c in first if not c)
+        if empties > n1 / 2 and any(first):
+            rows[-1] = [join_lines([x, y]) if y and y != x else x for x, y in zip(rows[-1], first)]
+            rows2, pages2 = rows2[1:], pages2[1:]
+    if rows:
+        # 只补最左侧连续为空的分类列；遇到首列有值的行（新分类或“合计”）即停止
+        always = {j for j in range(n1) if all(r[j] for r in rows)}
+        prev = rows[-1]
+        for r in rows2:
+            lead = next((j for j, c in enumerate(r) if c), n1)
+            if lead == 0 or lead == n1 or not all(j in always for j in range(lead)):
+                break
+            for j in range(lead):
+                r[j] = prev[j]
+            prev = r
+    return {"header": t1["header"], "rows": rows + rows2, "row_pages": pages + pages2, "col_x": t1.get("col_x")}
 
 
 def _esc(cell: str) -> str:

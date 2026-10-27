@@ -181,3 +181,39 @@ def test_scanned_pdf_matches_text_version():
     assert len(tables) == 1 and len(tables[0]["rows"]) == 60
     ok = sum(1 for i in range(1, 61) if f"| 设备-{i:03d} |" in md)
     assert ok >= 58, f"OCR 表格行识别 {ok}/60"
+
+
+# ------------------------------------------------------------ 真实文档回归（文件不存在时跳过）
+
+NJG = "南京港（集团）班组建设考核评价办法.pdf"
+QZ = "《起重机械安全技术规程》 (1).pdf"
+
+
+@pytest.mark.skipif(not (SAMPLES / NJG).exists(), reason="缺少真实样例")
+def test_hidden_ocr_layer_and_cross_page_table():
+    res, els, _ = run(NJG)
+    md = res["markdown"]
+    # 叠加的旧 OCR 隐藏文字层被丢弃：无重复、无错字
+    assert "南泉恭" not in md and "评价项评价项" not in md and md.count("第一条 为推动班组精细化管理") == 1
+    # 首页（带公章图片）不被误 OCR 擦除
+    assert "宁港安制〔2025〕83 号" in md and "经研究决定" in md
+    heads = [e["text"] for e in els if e["type"] == "heading"]
+    assert "第一章 总则" in heads and "第六章 附则" in heads
+    assert not any(h.startswith("附件：") for h in heads)
+    assert "第十五条 集团对班组建设" in md
+    # 跨页续表列数不同仍能合并，并沿用纵向合并的分类列
+    assert "| 四 | 创新创效 | 推进双重预防提级建设工作。 | 10 |" in md
+    assert len([e for e in els if e["type"] == "table"]) == 1
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not (SAMPLES / QZ).exists(), reason="缺少真实样例")
+def test_numbered_headings_lists_and_toc():
+    res, els, opts = run(QZ)
+    md = res["markdown"]
+    assert "\n## 1 总则\n" in md and "\n### 1.2 适用范围\n" in md and "\n###### 2.3.4.3.1 外观\n" in md
+    assert "- (1) 符合法律法规、安全技术规范的规定和相关标准的要求；\n- (2) 符合使用条件和合同的要求；" in md
+    assert "消除或者减小其风险；" in md
+    assert "总则 ····" not in md
+    assert "| 机构工作级别 | 起升 / 单层缠绕 / 标准钢丝绳 |" in md
+    assert all(c["chars"] <= opts.max_chars for c in res["chunks"])

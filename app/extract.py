@@ -15,9 +15,29 @@ import pymupdf
 
 _OCR_PAGES: set[int] = set()
 _OCR_FUNC = None
+_FORCE_OCR = False
+
+
+def _text_layers(page) -> tuple[int, int]:
+    """页面可见文字数与不可见文字数（不可见文字通常是之前叠加的 OCR 层）。"""
+    vis = inv = 0
+    for block in page.get_text("dict", flags=pymupdf.TEXTFLAGS_TEXT)["blocks"]:
+        for line in block.get("lines", []):
+            for s in line["spans"]:
+                n = len(s["text"].strip())
+                if s.get("alpha", 255) == 0:
+                    inv += n
+                else:
+                    vis += n
+    return vis, inv
 
 
 def _ocr_wrapper(page, **kwargs):
+    # 电子文档叠加了旧 OCR 层时不再 OCR：OCR 前会按旧 OCR 文字的位置做擦除，会把同位置的可见正文一起删掉
+    if not _FORCE_OCR:
+        vis, inv = _text_layers(page)
+        if inv and vis >= 50:
+            return None
     _OCR_PAGES.add(page.number)
     return _OCR_FUNC(page, **kwargs)
 
@@ -73,15 +93,29 @@ def _parse(doc, pages, ocr_mode, ocr_dpi):
     )
 
 
+def _font_name(span) -> str:
+    """字体名；部分 PDF 把 UTF-8 字体名按 Latin-1 存储（如“方正黑体_GBK”），这里还原。"""
+    name = span.get("font", "") or ""
+    try:
+        return name.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return name
+
+
 def _span_is_bold(span) -> bool:
+    name = _font_name(span).lower()
     return bool(span.get("flags", 0) & 16) or any(
-        k in span.get("font", "").lower() for k in ("bold", "heavy", "black", "semibold", "黑体")
+        k in name for k in ("bold", "heavy", "black", "semibold", "黑体", "hei", "粗")
     )
 
 
-def _line_from_spans(line) -> dict | None:
-    spans = [s for s in line["spans"] if s.get("text")]
-    if not spans:
+def _span_visible(span) -> bool:
+    return span.get("alpha", 255) != 0
+
+
+def _line_from_spans(line, drop_invisible=False) -> dict | None:
+    spans = [s for s in line["spans"] if s.get("text") and (not drop_invisible or _span_visible(s))]
+    if not spans or not "".join(s["text"] for s in spans).strip():
         return None
     parts = []
     prev = None
@@ -94,14 +128,23 @@ def _line_from_spans(line) -> dict | None:
         parts.append(t)
         prev = s
     text = "".join(parts)
-    nchars = sum(len(s["text"].strip()) for s in spans) or 1
-    bold_chars = sum(len(s["text"].strip()) for s in spans if _span_is_bold(s))
-    size = max(spans, key=lambda s: len(s["text"].strip()))["size"]
+    # 加粗比例只按文字计算（不含数字、标点），编号常用不同字体
+    def letters(t):
+        return sum(1 for c in t if c.isalpha())
+
+    nchars = sum(letters(s["text"]) for s in spans) or 1
+    bold_chars = sum(letters(s["text"]) for s in spans if _span_is_bold(s))
+    lead = next(s for s in spans if s["text"].strip())
+    main = max(spans, key=lambda s: len(s["text"].strip()))
+    x0 = min(s["bbox"][0] for s in spans)
+    x1 = max(s["bbox"][2] for s in spans)
     return {
         "text": text,
-        "bbox": [round(v, 2) for v in line["bbox"]],
-        "size": round(size, 2),
+        "bbox": [round(x0, 2), round(line["bbox"][1], 2), round(x1, 2), round(line["bbox"][3], 2)],
+        "size": round(main["size"], 2),
         "bold": bold_chars / nchars > 0.6,
+        "lead_bold": _span_is_bold(lead),
+        "font": _font_name(main),
     }
 
 
@@ -125,7 +168,7 @@ def _cluster(values, tol=1.5):
 class _PageChars:
     """页面字符索引：按字符中心点取单元格文本，避免表格内文字顺序错乱。"""
 
-    def __init__(self, page):
+    def __init__(self, page, drop_invisible=False):
         self.lines = []  # (line_bbox, [(c, cx, cy)])
         raw = page.get_text("rawdict", flags=pymupdf.TEXTFLAGS_TEXT & ~pymupdf.TEXT_PRESERVE_IMAGES)
         for block in raw["blocks"]:
@@ -133,6 +176,7 @@ class _PageChars:
                 chars = [
                     (ch["c"], (ch["bbox"][0] + ch["bbox"][2]) / 2, (ch["bbox"][1] + ch["bbox"][3]) / 2)
                     for span in line["spans"]
+                    if not drop_invisible or _span_visible(span)
                     for ch in span["chars"]
                 ]
                 if chars and line["dir"][0] > 0.9:
@@ -162,7 +206,7 @@ def _grid_from_lines_table(tab, chars: _PageChars) -> list[list[str]] | None:
     """把 find_tables 结果转成完整网格，合并单元格的内容填充到其覆盖的所有格子。"""
     rows = tab.rows
     if not rows:
-        return None
+        return None, None
     xs = _cluster([c[0] for r in rows for c in r.cells if c])
     ys = _cluster([c[1] for r in rows for c in r.cells if c])
     nrows, ncols = len(rows), max(len(r.cells) for r in rows)
@@ -179,7 +223,7 @@ def _grid_from_lines_table(tab, chars: _PageChars) -> list[list[str]] | None:
                 for cc in range(ci, min(ci + nspan_c, ncols)):
                     if grid[rr][cc] is None:
                         grid[rr][cc] = text
-    return [[c or "" for c in row] for row in grid]
+    return [[c or "" for c in row] for row in grid], xs[:ncols] if len(xs) >= ncols else None
 
 
 def _lines_table(page, rect, cache: dict):
@@ -197,9 +241,9 @@ def _lines_table(page, rect, cache: dict):
     if _iou(best.bbox, rect) < 0.4 and overlap.get_area() < 0.8 * r.get_area():
         return None
     if "chars" not in cache:
-        cache["chars"] = _PageChars(page)
-    grid = _grid_from_lines_table(best, cache["chars"])
-    return (grid, list(best.bbox)) if grid else None
+        cache["chars"] = _PageChars(page, cache.get("drop_invisible", False))
+    res = _grid_from_lines_table(best, cache["chars"])
+    return (res[0], list(best.bbox), res[1]) if res and res[0] else None
 
 
 def _fill_empty_ocr_cells(page, rows, cells, limit=150):
@@ -238,8 +282,11 @@ def _fill_empty_ocr_cells(page, rows, cells, limit=150):
 
 def _convert_page(doc, pl, ocr_pages) -> dict:
     page_index = pl.page_number - 1
-    page = None
-    cache: dict = {}
+    # 可见文字充足、又叠加了一层不可见文字（旧 OCR 层）时，丢弃不可见文字，避免内容重复和错字
+    page = doc[page_index]
+    vis, inv = _text_layers(page)
+    drop_invisible = page_index not in ocr_pages and inv > 0 and vis >= 20
+    cache: dict = {"drop_invisible": drop_invisible}
     out_boxes = []
     for box in pl.boxes:
         b = {
@@ -250,24 +297,26 @@ def _convert_page(doc, pl, ocr_pages) -> dict:
             "max_fontsize": box.max_fontsize,
         }
         if box.boxclass == "table" and box.table:
-            tab = {"rows": box.table.get("extract"), "source": "layout"}
+            cells = box.table.get("cells")
+            col_x = [round(c[0], 1) for c in cells[0]] if cells and cells[0] and all(cells[0]) else None
+            tab = {"rows": box.table.get("extract"), "source": "layout", "col_x": col_x}
             if page_index in ocr_pages and tab["rows"]:
-                if page is None:
-                    page = doc[page_index]
                 try:
                     _fill_empty_ocr_cells(page, tab["rows"], box.table.get("cells"))
                 except Exception:
                     pass
             else:
-                if page is None:
-                    page = doc[page_index]
                 hit = _lines_table(page, b["bbox"], cache)
                 if hit:
-                    tab = {"rows": hit[0], "source": "lines"}
+                    tab = {"rows": hit[0], "source": "lines", "col_x": hit[2]}
                     b["bbox"] = [round(v, 2) for v in hit[1]]
+                elif drop_invisible and box.table.get("cells"):
+                    if "chars" not in cache:
+                        cache["chars"] = _PageChars(page, True)
+                    tab["rows"] = [[cache["chars"].text_in(c) if c else "" for c in row] for row in box.table["cells"]]
             b["table"] = tab
         for line in box.textlines or []:
-            ln = _line_from_spans(line)
+            ln = _line_from_spans(line, drop_invisible)
             if ln:
                 b["lines"].append(ln)
         out_boxes.append(b)
@@ -276,6 +325,7 @@ def _convert_page(doc, pl, ocr_pages) -> dict:
         "width": round(pl.width, 2),
         "height": round(pl.height, 2),
         "ocr": page_index in ocr_pages,
+        "dropped_invisible": drop_invisible,
         "boxes": out_boxes,
     }
 
@@ -284,6 +334,8 @@ def extract_pages(path: str, pages: list[int], ocr_mode: str = "auto", ocr_dpi: 
     """解析指定页（0 基）。在工作进程中调用。"""
     if _OCR_FUNC is None and ocr_mode != "off":
         worker_init()
+    global _FORCE_OCR
+    _FORCE_OCR = ocr_mode == "force"
     _OCR_PAGES.clear()
     doc = pymupdf.open(path)
     if doc.needs_pass and not doc.authenticate(""):

@@ -51,7 +51,8 @@ HEADING_PATTERNS = [
     (re.compile(r"^\d{1,3}\s*[)）]"), "num-rparen", 20),
     (re.compile(r"^[①-⑳]"), "circled", 21),
 ]
-NUM_HEADING_RE = re.compile(r"^(\d{1,3})((?:[.．]\d{1,3})*)[.．]?(?=\s|[^\d.．%年月日号个万亿元])")
+# 多级数字编号，允许附录字母前缀：1 / 1.2 / 2.3.4 / A1 / C3.11.9.5
+NUM_HEADING_RE = re.compile(r"^([A-Z]{1,2})?(\d{1,3})((?:[.．]\d{1,3})*)[.．]?(?=\s|[^\d.．%年月日号个万亿元吨])")
 STRONG_KEYS = {"part", "chapter", "section", "appendix", "cn"}
 
 
@@ -61,7 +62,7 @@ def numbering_key(text: str):
             return key, rank
     m = NUM_HEADING_RE.match(text)
     if m:
-        depth = 1 + m.group(2).count(".") + m.group(2).count("．")
+        depth = 1 + m.group(3).count(".") + m.group(3).count("．")
         return f"num-{depth}", 4 + depth
     return None, None
 
@@ -142,15 +143,6 @@ def _remove_headers_footers(blocks, n_pages, enabled: bool, stats: dict):
 # ---------------------------------------------------------------- 标题
 
 
-def _body_font_size(blocks) -> float:
-    cnt = Counter()
-    for b in blocks:
-        if b["cls"] in ("text", "list-item"):
-            for l in b["lines"]:
-                cnt[round(l["size"] * 2) / 2] += len(l["text"])
-    return cnt.most_common(1)[0][0] if cnt else 10.0
-
-
 def _heading_plausible(text: str) -> bool:
     if not text or len(text) > 80:
         return False
@@ -168,29 +160,6 @@ def _heading_plausible(text: str) -> bool:
     if re.fullmatch(r"[\d\W_]+", text):
         return False
     return True
-
-
-def _block_size(b) -> float:
-    return max((l["size"] for l in b["lines"]), default=0)
-
-
-def _block_bold(b) -> bool:
-    return bool(b["lines"]) and all(l["bold"] for l in b["lines"])
-
-
-def _promote_heading(b, body_size, toc_keys) -> bool:
-    """正文框是否其实是标题（版面模型漏判）。"""
-    text = b["text"]
-    if len(b["lines"]) > 2 or not _heading_plausible(text) or len(text) > 40 or ends_sentence(text):
-        return False
-    key = strip_key(text)
-    if key and key in toc_keys.get(b["page"], set()):
-        return True
-    nkey, _ = numbering_key(text)
-    styled = _block_bold(b) or _block_size(b) >= body_size * 1.15
-    if nkey in STRONG_KEYS and (styled or len(text) <= 25):
-        return True
-    return bool(nkey) and nkey.startswith("num-") and nkey != "num-1" and styled
 
 
 def _same_size(a, b) -> bool:
@@ -213,9 +182,14 @@ def assign_heading_levels(headings: list[dict], toc: list | None = None):
         key, rank = numbering_key(h["text"])
         if key is None:
             key = size_key(h["size"])
-        idx = next((i for i, e in enumerate(stack) if e["key"] == key), None)
+        # 与仍在栈中的标题同名（如封面标题在正文首页重复出现）：视为同一层级
+        tkey = strip_key(h["text"])
+        idx = next((i for i, e in enumerate(stack) if e.get("text") == tkey), None)
+        if idx is None:
+            idx = next((i for i, e in enumerate(stack) if e["key"] == key), None)
         if idx is not None:
             del stack[idx + 1 :]
+            stack[idx]["text"] = tkey
             level = idx + 1
         else:
             while stack:
@@ -227,7 +201,7 @@ def assign_heading_levels(headings: list[dict], toc: list | None = None):
                 if not pop:
                     break
                 stack.pop()
-            stack.append({"key": key, "rank": rank, "size": h["size"]})
+            stack.append({"key": key, "rank": rank, "size": h["size"], "text": tkey})
             level = len(stack)
         h["level"] = level
 
@@ -268,62 +242,218 @@ def _list_marker(text: str):
     return None
 
 
-def _split_text_block(b):
-    """把正文框拆分为段落/列表项：依据首行缩进、短行+句末标点、行首列表标记。"""
-    lines = b["lines"]
-    if not lines:
-        return []
-    x0 = min(l["bbox"][0] for l in lines)
-    x1 = max(l["bbox"][2] for l in lines)
-    groups: list[list[dict]] = []
-    for i, ln in enumerate(lines):
-        if not groups:
-            groups.append([ln])
-            continue
-        prev = groups[-1][-1]
-        size = ln["size"] or 10
-        prev_short = prev["bbox"][2] < x1 - 2 * size
-        indented = ln["bbox"][0] - x0 > 1.2 * size and ln["bbox"][0] - prev["bbox"][0] > 0.8 * size
-        is_marker = _list_marker(ln["text"]) is not None and ln["bbox"][0] - x0 < 3 * size
-        new = (indented and (ends_sentence(prev["text"]) or prev_short)) or (prev_short and ends_sentence(prev["text"]))
-        if is_marker and (prev_short or ends_sentence(prev["text"])):
-            new = True
-        if new:
-            groups.append([ln])
-        else:
-            groups[-1].append(ln)
-    out = []
-    for g in groups:
-        text = join_lines([l["text"] for l in g])
-        bbox = [min(l["bbox"][0] for l in g), min(l["bbox"][1] for l in g), max(l["bbox"][2] for l in g), max(l["bbox"][3] for l in g)]
-        out.append((text, bbox, g[0]["bbox"][0], g[0]["size"]))
-    return out
-
-
 def _is_prose(b) -> bool:
     if len(b["text"]) < 30 or not b["lines"]:
         return False
     return sum(len(l["text"]) for l in b["lines"]) / len(b["lines"]) >= 12
 
 
-def _make_list_item(text, page, bbox, x0, ocr):
+def _make_list_item(text, page, bbox, size=None, ph=None):
     lm = _list_marker(text)
     if lm:
         marker, ordered, body = lm
     else:
         marker, ordered, body = "-", False, text
-    return {"type": "list_item", "text": body, "marker": marker, "ordered": ordered, "x0": x0,
-            "pages": [page, page], "bbox": bbox, "ocr": ocr}
+    return {"type": "list_item", "text": body, "marker": marker, "ordered": ordered,
+            "pages": [page, page], "bbox": bbox, "fs": size, "ph": ph}
 
 
-def _blocks_to_elements(blocks, body_size, toc_keys, stats):
+CAPTION_LINE_RE = re.compile(r"^(续?表|图|Table|TABLE|Fig\.?|Figure)\s*[A-Za-z]{0,3}\s*[-－—.]?\s*\d")
+TOC_LINE_RE = re.compile(r"(?:[.·…‥・_]\s*){5,}\s*[(（]?\s*\d+\s*[)）]?\s*$")
+TOC_TITLE_RE = re.compile(r"^(目录|contents|tableofcontents)$", re.I)
+ARTICLE_RE = re.compile(rf"^(第[\d{CN_NUM}]+[条款])\s*(?=\S)")
+TEXT_CLASSES = {"text", "list-item", "title", "section-header", "formula"}
+
+
+class BodyStyle:
+    """正文主样式（字号、是否粗体），用于判断“与正文不同”的标题行。"""
+
+    def __init__(self, blocks):
+        sizes = Counter()
+        bold = total = 0
+        for b in blocks:
+            if b["cls"] in ("text", "list-item"):
+                for l in b["lines"]:
+                    n = len(l["text"])
+                    sizes[round(l["size"] * 2) / 2] += n
+                    total += n
+                    bold += n if l["bold"] else 0
+        self.size = sizes.most_common(1)[0][0] if sizes else 10.0
+        self.bold = total > 0 and bold / total > 0.5
+
+    def emphasized(self, line) -> bool:
+        return line["size"] >= self.size * 1.12 or (line["bold"] and not self.bold)
+
+
+def _norm_para(text: str) -> str:
+    return ARTICLE_RE.sub(r"\1 ", text)
+
+
+class _Flow:
+    """同一页同一栏内连续的文字框。
+
+    版面模型常把标题行与正文、或多条条款框在一起，这里把框内的行重新组织为
+    标题 / 段落 / 列表项：依据首行缩进、上一行是否写满、句末标点、行首编号与字体变化。
+    """
+
+    def __init__(self, page, ph, style: BodyStyle, toc_keys):
+        self.page, self.ph, self.style, self.toc_keys = page, ph, style, toc_keys
+        self.lines: list[dict] = []
+        self.last_bbox = None
+
+    def accepts(self, b) -> bool:
+        if b["page"] != self.page:
+            return False
+        lb = self.last_bbox
+        # 向上跳且移到右侧：换栏
+        return not (b["bbox"][1] < lb[1] - 5 and b["bbox"][0] > lb[2] - 5)
+
+    def add(self, b):
+        hint = b["cls"] in ("title", "section-header")
+        for l in b["lines"]:
+            if not TOC_LINE_RE.search(l["text"]):
+                self.lines.append({**l, "hint": hint})
+        self.last_bbox = b["bbox"]
+
+    def _heading_line(self, l) -> bool:
+        text = l["text"]
+        # PDF 书签目录中的条目优先认定为标题
+        if len(text) <= 120 and strip_key(text) in self.toc_keys.get(self.page, set()):
+            return True
+        if not _heading_plausible(text) or len(text) > 50 or CAPTION_LINE_RE.match(text):
+            return False
+        if text.endswith(("：", ":")):
+            return False
+        key, _ = numbering_key(text)
+        if key == "appendix" and re.match(r"^(附件|附录)\s*[\d一二三四五六七八九十A-Z]*\s*[：:]\s*\S", text):
+            return False
+        styled = self.style.emphasized(l)
+        if key in ("num-paren", "num-rparen", "circled", "article"):
+            return l["hint"] and styled and len(text) <= 20
+        if key:
+            if styled or (l["hint"] and len(text) <= 30):
+                return True
+            # 仅编号使用粗体（如“1.2 适用范围”中“1.2”为黑体）的独立短行
+            if l.get("lead_bold") and not self.style.bold and len(text) <= 30 and not ends_sentence(text):
+                return True
+            return key in STRONG_KEYS and len(text) <= 25 and not ends_sentence(text)
+        # 无编号：须与正文样式不同，且较短
+        return styled and len(text) <= 30
+
+    def _para_break(self, p, l, left, right, width) -> bool:
+        """上一行 p 与本行 l 之间是否分段。"""
+        size = l["size"] or 10
+        text, ptext = l["text"], p["text"]
+        if abs(p["size"] - l["size"]) > max(1.0, 0.15 * p["size"]) or p["bold"] != l["bold"]:
+            return True
+        if l["bbox"][1] - p["bbox"][3] > 1.2 * size:
+            return True
+        indented = l["bbox"][0] - left > 1.2 * size
+        p_end = ends_sentence(ptext)
+        p_short = p["bbox"][2] < right - max(1.5 * size, 0.12 * width)
+        p_very_short = p["bbox"][2] < right - 0.35 * width
+        starts_item = bool(_list_marker(text) or ARTICLE_RE.match(text)) or numbering_key(text)[0] in STRONG_KEYS
+        if (starts_item or indented) and (p_end or p_short):
+            return True
+        if p_short and p_end:
+            return True
+        return p_very_short and not ptext.endswith(("，", ","))
+
+    def build(self) -> list[dict]:
+        lines = self.lines
+        if not lines:
+            return []
+        xs = sorted(l["bbox"][0] for l in lines)
+        left = xs[len(xs) // 10]
+        right = max(l["bbox"][2] for l in lines)
+        width = max(right - left, 1)
+        out: list[dict] = []
+        para: list[dict] = []
+        head: list[dict] = []  # 正在拼接的（可能多行的）标题
+
+        def flush_para():
+            if not para:
+                return
+            text = _norm_para(join_lines([l["text"] for l in para]))
+            bbox = [min(l["bbox"][0] for l in para), para[0]["bbox"][1],
+                    max(l["bbox"][2] for l in para), para[-1]["bbox"][3]]
+            size = para[0]["size"]
+            if _list_marker(text):
+                out.append(_make_list_item(text, self.page, bbox, size, self.ph))
+            else:
+                role = "caption" if CAPTION_LINE_RE.match(text) and len(text) <= 60 else None
+                out.append({"type": "paragraph", "text": text, "role": role, "pages": [self.page, self.page],
+                            "bbox": bbox, "fs": size, "ph": self.ph})
+            para.clear()
+
+        def flush_head():
+            if not head:
+                return
+            text = normalize_heading(join_lines([l["text"] for l in head]))
+            if not TOC_TITLE_RE.match(strip_key(text)):
+                bbox = [min(l["bbox"][0] for l in head), head[0]["bbox"][1],
+                        max(l["bbox"][2] for l in head), head[-1]["bbox"][3]]
+                out.append({"type": "heading", "text": text, "size": max(l["size"] for l in head),
+                            "pages": [self.page, self.page], "bbox": bbox, "ph": self.ph})
+            head.clear()
+
+        for l in lines:
+            p = para[-1] if para else None
+            continues = p is not None and not self._para_break(p, l, left, right, width)
+            if not continues and self._heading_line(l):
+                h = head[-1] if head else None
+                # 标题折行：同样式、紧邻、且下一行没有新编号
+                wrapped = (h is not None and numbering_key(l["text"])[0] is None and _same_size(h["size"], l["size"])
+                           and h["bold"] == l["bold"] and -2 <= l["bbox"][1] - h["bbox"][3] < 1.2 * (l["size"] or 10))
+                if not wrapped:
+                    flush_head()
+                flush_para()
+                head.append(l)
+                continue
+            flush_head()
+            if not continues:
+                flush_para()
+            para.append(l)
+        flush_head()
+        flush_para()
+        return out
+
+
+def _is_toc_table(raw) -> bool:
+    """被识别为表格的目录页：多数行带点线引导符和页码。"""
+    rows = [" ".join(c or "" for c in r) for r in raw or []]
+    rows = [r for r in rows if r.strip()]
+    return bool(rows) and sum(1 for r in rows if TOC_LINE_RE.search(r.replace("\n", " ").strip())) >= len(rows) / 2
+
+
+def _blocks_to_elements(blocks, style: BodyStyle, toc_keys, stats):
     elements = []
+    flow: _Flow | None = None
+
+    def close_flow():
+        nonlocal flow
+        if flow is not None:
+            elements.extend(flow.build())
+        flow = None
+
     for b in blocks:
         cls, page, text = b["cls"], b["page"], b["text"]
+        if cls in TEXT_CLASSES:
+            if not b["lines"]:
+                continue
+            if flow is None or not flow.accepts(b):
+                close_flow()
+                flow = _Flow(page, b["ph"], style, toc_keys)
+            flow.add(b)
+            continue
+        close_flow()
         base = {"pages": [page, page], "bbox": b["bbox"], "pw": b["pw"], "ph": b["ph"], "ocr": b["ocr"]}
         if cls == "table":
             raw = (b["table"] or {}).get("rows")
-            t = T.normalize_table(raw, b["ocr"])
+            if _is_toc_table(raw):
+                stats["toc_removed"] = stats.get("toc_removed", 0) + 1
+                continue
+            t = T.normalize_table(raw, b["ocr"], (b["table"] or {}).get("col_x"))
             if t:
                 elements.append({"type": "table", **t, "row_pages": [page] * len(t["rows"]), **base})
                 stats["tables"] += 1
@@ -334,32 +464,18 @@ def _blocks_to_elements(blocks, body_size, toc_keys, stats):
             continue
         if not text:
             continue
-        if cls in ("title", "section-header") or (cls == "text" and _promote_heading(b, body_size, toc_keys)):
-            if _heading_plausible(text):
-                elements.append({"type": "heading", "text": normalize_heading(text), "size": _block_size(b), **base})
-                continue
-            if _list_marker(text):
-                elements.append(_make_list_item(text, page, b["bbox"], b["bbox"][0], b["ocr"]))
-                continue
-            cls = "text"
-        if cls == "list-item":
-            elements.append(_make_list_item(text, page, b["bbox"], b["bbox"][0], b["ocr"]))
-        elif cls == "caption":
+        if cls == "caption":
             elements.append({"type": "paragraph", "text": text, "role": "caption", **base})
         elif cls == "footnote":
             elements.append({"type": "paragraph", "text": text, "role": "footnote", **base})
         elif cls == "code":
-            code = "\n".join(l["text"] for l in b["lines"])
-            elements.append({"type": "code", "text": code, **base})
+            elements.append({"type": "code", "text": "\n".join(l["text"] for l in b["lines"]), **base})
         elif cls == "picture":
             if _is_prose(b):
                 elements.append({"type": "paragraph", "text": text, "role": None, **base})
-        else:  # text / formula / 其他
-            for ptext, bbox, x0, size in _split_text_block(b):
-                if _list_marker(ptext) and cls == "text":
-                    elements.append(_make_list_item(ptext, page, bbox, x0, b["ocr"]))
-                else:
-                    elements.append({"type": "paragraph", "text": ptext, "role": None, **base, "bbox": bbox, "fs": size})
+        else:
+            elements.append({"type": "paragraph", "text": text, "role": None, **base})
+    close_flow()
     return elements
 
 
@@ -367,8 +483,10 @@ def _blocks_to_elements(blocks, body_size, toc_keys, stats):
 
 
 def _is_continuation(prev, nxt) -> bool:
-    """prev 段落是否延续到 nxt：跨页（页尾→下页首）或跨栏（栏底→下一栏顶）。"""
-    if prev["type"] != "paragraph" or nxt["type"] != "paragraph" or prev.get("role") or nxt.get("role"):
+    """prev 段落/列表项是否延续到 nxt：跨页（页尾→下页首）或跨栏（栏底→下一栏顶）。"""
+    if prev["type"] not in ("paragraph", "list_item") or nxt["type"] != "paragraph":
+        return False
+    if prev.get("role") or nxt.get("role"):
         return False
     if ends_sentence(prev["text"]) or len(prev["text"]) < 15:
         return False
@@ -378,10 +496,6 @@ def _is_continuation(prev, nxt) -> bool:
         return prev.get("last_on_page", False) and nxt.get("first_on_page", False)
     if nxt["pages"][0] == prev["pages"][1]:
         pb, nb = prev["bbox"], nxt["bbox"]
-        # 版面模型把同一段落切成上下相邻的两个框
-        gap_limit = max(1.2 * (nxt.get("fs") or prev.get("fs") or 10), 6)
-        if -2 <= nb[1] - pb[3] < gap_limit and abs(nb[0] - pb[0]) < 30 and abs(nb[2] - pb[2]) < 30:
-            return True
         # 跨栏：上一栏底部 → 下一栏顶部
         ph = prev.get("ph") or 842
         return pb[3] > ph * 0.7 and nb[1] < pb[1] - 20 and nb[0] > pb[0] + 50
@@ -459,7 +573,24 @@ def _merge_across(elements, stats):
     return out
 
 
+def _marker_style(marker: str) -> str:
+    if marker == "-":
+        return "bullet"
+    if re.fullmatch(r"\d+\.", marker):
+        return "num"
+    if re.match(r"[（(]\s*\d", marker):
+        return "paren-num"
+    if re.match(rf"[（(]\s*[{CN_NUM}]", marker):
+        return "paren-cn"
+    if re.match(r"[（(]\s*[a-zA-Z]", marker) or re.match(r"[a-z][.)]", marker):
+        return "alpha"
+    if re.match(r"[①-⑳]", marker):
+        return "circled"
+    return "cn" if marker.endswith("、") else "other"
+
+
 def _group_lists(elements):
+    """相邻列表项合为列表；嵌套层级按编号样式的出现顺序推断（如 1. → (1) → ①）。"""
     out = []
     for e in elements:
         if e["type"] != "list_item":
@@ -468,21 +599,21 @@ def _group_lists(elements):
         if out and out[-1]["type"] == "list" and out[-1]["pages"][1] in (e["pages"][0], e["pages"][0] - 1):
             lst = out[-1]
         else:
-            lst = {"type": "list", "items": [], "pages": list(e["pages"]), "_x0s": []}
+            lst = {"type": "list", "items": [], "pages": list(e["pages"])}
             out.append(lst)
-        lst["items"].append({"text": e["text"], "marker": e["marker"], "ordered": e["ordered"], "x0": e["x0"]})
+        lst["items"].append({"text": e["text"], "marker": e["marker"], "ordered": e["ordered"]})
         lst["pages"][1] = e["pages"][1]
     for e in out:
-        if e["type"] == "list":
-            xs = sorted({round(it["x0"] / 6) for it in e["items"]})
-            for it in e["items"]:
-                it["depth"] = min(xs.index(round(it.pop("x0") / 6)), 3)
-            # 缩进层级不能跳级
-            prev = 0
-            for it in e["items"]:
-                it["depth"] = min(it["depth"], prev + 1)
-                prev = it["depth"]
-            e.pop("_x0s", None)
+        if e["type"] != "list":
+            continue
+        stack: list[str] = []
+        for it in e["items"]:
+            st = _marker_style(it["marker"])
+            if st in stack:
+                del stack[stack.index(st) + 1 :]
+            else:
+                stack.append(st)
+            it["depth"] = min(len(stack) - 1, 3)
     return out
 
 
@@ -494,18 +625,18 @@ def build_elements(pages: list[dict], toc: list | None = None, remove_header_foo
              "tables_merged": 0, "paragraphs_merged": 0, "removed_header_footer": 0}
     blocks = _collect_blocks(pages)
     blocks = _remove_headers_footers(blocks, len(pages), remove_header_footer, stats)
-    body_size = _body_font_size(blocks)
+    style = BodyStyle(blocks)
     toc_keys = defaultdict(set)
     for _lvl, title, pg in toc or []:
         for p in (pg - 1, pg, pg + 1):
             toc_keys[p].add(strip_key(title))
-    elements = _blocks_to_elements(blocks, body_size, toc_keys, stats)
+    elements = _blocks_to_elements(blocks, style, toc_keys, stats)
     headings = [e for e in elements if e["type"] == "heading"]
     assign_heading_levels(headings, toc)
     elements = _merge_across(elements, stats)
     elements = _group_lists(elements)
     for e in elements:
-        for k in ("bbox", "pw", "ph", "ocr", "size", "first_on_page", "last_on_page", "fs"):
+        for k in ("bbox", "pw", "ph", "ocr", "size", "first_on_page", "last_on_page", "fs", "col_x"):
             e.pop(k, None)
     stats["headings"] = len(headings)
     return elements, stats
