@@ -1,5 +1,5 @@
-import { useMemo } from "react"
-import { RefreshCw } from "lucide-react"
+import { useMemo, useRef } from "react"
+import { FilePlus2, RefreshCw } from "lucide-react"
 
 import type { Project } from "@/lib/project"
 import { Button } from "@/components/ui/button"
@@ -13,10 +13,13 @@ interface ProjectNavProps {
   locked: boolean
   onSelect: (path: string) => void
   onRefresh: () => void
+  /** 打开目录外的 PDF */
+  onFile: (file: File) => void
 }
 
-/** 左侧文件导航：项目目录中的全部 PDF。 */
-export function ProjectNav({ project, active, locked, onSelect, onRefresh }: ProjectNavProps) {
+/** 左栏上半部分：项目目录中的全部 PDF。 */
+export function ProjectNav({ project, active, locked, onSelect, onRefresh, onFile }: ProjectNavProps) {
+  const pickRef = useRef<HTMLInputElement>(null)
   const items = useMemo(
     () =>
       project.files.map((f) => ({
@@ -29,21 +32,44 @@ export function ProjectNav({ project, active, locked, onSelect, onRefresh }: Pro
   const converted = project.files.filter((f) => f.converted).length
 
   return (
-    <aside className="flex min-h-0 flex-col border-border/60 border-r">
-      <div className="flex items-center gap-2 py-3 pr-2 pl-5">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-0.5 py-3 pr-2 pl-5">
         <span className="text-xs font-medium text-muted-foreground tabular-nums">
           PDF {project.files.length}
           {converted > 0 && ` · 已转换 ${converted}`}
         </span>
+        <Hint label="打开目录外的 PDF（也可直接拖入页面）">
+          <Button
+            aria-label="新文件"
+            className="ml-auto"
+            disabled={locked}
+            onClick={() => pickRef.current?.click()}
+            size="icon-sm"
+            variant="ghost"
+          >
+            <FilePlus2 />
+          </Button>
+        </Hint>
+        <input
+          accept="application/pdf,.pdf"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            e.target.value = ""
+            if (f) onFile(f)
+          }}
+          ref={pickRef}
+          type="file"
+        />
         {project.writable && (
           <Hint label="重新扫描目录">
-            <Button aria-label="重新扫描目录" className="ml-auto" onClick={onRefresh} size="icon-sm" variant="ghost">
+            <Button aria-label="重新扫描目录" onClick={onRefresh} size="icon-sm" variant="ghost">
               <RefreshCw />
             </Button>
           </Hint>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto pr-3 pb-6 pl-2">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-3 pb-4 pl-2">
         {items.length ? (
           <TreeNav
             activeHref={active ? `#${encodeURIComponent(active)}` : undefined}
@@ -58,6 +84,6 @@ export function ProjectNav({ project, active, locked, onSelect, onRefresh }: Pro
           <p className="px-3 py-2 text-sm text-muted-foreground">目录中没有 PDF 文件</p>
         )}
       </div>
-    </aside>
+    </div>
   )
 }

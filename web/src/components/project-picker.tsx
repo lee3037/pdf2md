@@ -4,7 +4,7 @@ import type { Project, RecentProject } from "@/lib/project"
 import { canWriteBack, forgetRecent, fromFileList, loadRecents, openRecent, pickDirectory } from "@/lib/project"
 import { EmptyAction, IconDelete, IconFolder } from "@/components/spectrumui/blocks/empty-states/empty-state-kit"
 import { ProjectEmpty } from "@/components/spectrumui/blocks/empty-states/project-empty"
-import { showPolishedToast } from "@/components/ui/halo-toast"
+import { toast } from "@/components/toaster"
 
 function ago(t: number) {
   const m = Math.round((Date.now() - t) / 60000)
@@ -32,11 +32,7 @@ export function ProjectPicker({ onOpen }: { onOpen: (p: Project) => void }) {
       const p = await task()
       if (p) onOpen(p)
     } catch (e) {
-      showPolishedToast({
-        title: "无法打开目录",
-        description: e instanceof Error ? e.message : String(e),
-        rimVariant: "destructive",
-      })
+      toast({ title: "无法打开目录", description: e instanceof Error ? e.message : String(e), status: "error" })
     } finally {
       busy.current = false
     }

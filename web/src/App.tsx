@@ -6,11 +6,13 @@ import { createJob, DEFAULT_CHUNK, DEFAULT_CONVERT, getJob, rechunk } from "@/li
 import type { Project } from "@/lib/project"
 import { mdName, readPdf, rescan, writeMarkdown } from "@/lib/project"
 import { useStored } from "@/lib/use-stored"
-import { PolishedToaster, showPolishedToast } from "@/components/ui/halo-toast"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import type { MorphButtonState } from "@/components/spectrumui/morph-button"
+import { toast, Toaster } from "@/components/toaster"
+import { FileDrawer, type FileDrawerView, type ParseSettings } from "@/components/file-drawer"
 import { ProjectPicker } from "@/components/project-picker"
 import type { Pending } from "@/components/stage"
-import { Workspace, type Doc } from "@/components/workspace"
+import { Workspace, type Doc, type Preview } from "@/components/workspace"
 
 const sameExceptSeparator = (a: ChunkOptions, b: ChunkOptions) =>
   (Object.keys(a) as (keyof ChunkOptions)[]).every((k) => k === "separator" || a[k] === b[k])
@@ -19,7 +21,7 @@ const sameConvert = (a: ConvertOptions, b: ConvertOptions) =>
   (a.ocr_mode === "off" || a.ocr_dpi === b.ocr_dpi)
 
 const fail = (title: string, e: unknown) =>
-  showPolishedToast({ title, description: e instanceof Error ? e.message : String(e), rimVariant: "destructive", politeness: "alert" })
+  toast({ title, description: e instanceof Error ? e.message : String(e), status: "error" })
 
 const isPdf = (f: File) => /\.pdf$/i.test(f.name) || f.type === "application/pdf"
 
@@ -35,7 +37,11 @@ export default function App() {
   const [edited, setEdited] = useState(false) // 有手动编辑：分块参数变更不再自动覆盖
   const [unsaved, setUnsaved] = useState(false) // 有未保存/下载的结果
   const [busy, setBusy] = useState(false)
+  const [saveState, setSaveState] = useState<MorphButtonState>("idle")
   const [dragging, setDragging] = useState(false)
+  const [preview, setPreview] = useState<Preview | null>(null)
+  // seq 每次打开递增，用作 key：关闭时保留内容播放收起动画，再次打开时重置抽屉内状态
+  const [drawer, setDrawer] = useState<{ path: string; view: FileDrawerView; open: boolean; seq: number } | null>(null)
   const pollRef = useRef<number | null>(null)
   const runRef = useRef(0) // 每次转换或离开项目递增，过期的轮询自行停止
   const overwriteOk = useRef<string | null>(null) // 已确认可覆盖已有 .md 的任务
@@ -43,15 +49,15 @@ export default function App() {
   // ---------------------------------------------------------------- 转换
 
   const convert = useCallback(
-    async (file: File, path?: string) => {
+    async (file: File, path?: string, settings: ParseSettings = { convert: convertOpts, chunk: draft }) => {
       const run = ++runRef.current
-      const t0 = Date.now()
-      const opts = { ...convertOpts, ...draft }
-      setPending({ file, path, done: 0, total: 0, seconds: 0 })
+      const opts = { ...settings.convert, ...settings.chunk }
+      setPreview(null)
+      setPending({ file, path, done: 0, total: 0 })
       try {
         const { id, page_count } = await createJob(file, opts)
         if (run !== runRef.current) return
-        setPending({ file, path, done: 0, total: page_count, seconds: 0 })
+        setPending({ file, path, done: 0, total: page_count })
         const tick = async () => {
           try {
             const job = await getJob(id)
@@ -59,17 +65,16 @@ export default function App() {
             if (job.status === "done" && job.result) {
               setDoc({ jobId: id, file, path, result: job.result })
               setMarkdown(job.result.markdown)
-              setUsedConvert(convertOpts)
-              setApplied(draft)
+              setUsedConvert(settings.convert)
+              setApplied(settings.chunk)
               setEdited(false)
               setUnsaved(true)
               setPending(null)
-              job.result.warnings.forEach((w) => showPolishedToast({ title: w, duration: 8000 }))
+              job.result.warnings.forEach((w) => toast({ title: w, status: "info", duration: 8000 }))
               return
             }
             if (job.status === "error") throw new Error(job.error || "转换失败")
-            const seconds = Math.round((Date.now() - t0) / 1000)
-            setPending({ file, path, done: job.progress.done, total: job.progress.total, seconds })
+            setPending({ file, path, done: job.progress.done, total: job.progress.total })
             pollRef.current = window.setTimeout(tick, 700)
           } catch (e) {
             if (run !== runRef.current) return
@@ -87,27 +92,67 @@ export default function App() {
     [convertOpts, draft]
   )
 
+  const confirmReplace = useCallback(
+    () => !(unsaved && doc) || window.confirm("当前结果还未保存，确定替换？"),
+    [unsaved, doc]
+  )
+
   const openFile = useCallback(
     (file: File, path?: string) => {
       if (pending) return
       if (!isPdf(file)) {
-        showPolishedToast({ title: "请选择 PDF 文件", rimVariant: "destructive" })
+        toast({ title: "请选择 PDF 文件", status: "error" })
         return
       }
-      if (unsaved && doc && !window.confirm("当前结果还未保存，确定替换？")) return
+      if (!confirmReplace()) return
       convert(file, path)
     },
-    [pending, unsaved, doc, convert]
+    [pending, confirmReplace, convert]
   )
 
-  const selectPath = async (path: string) => {
-    if (!project || pending || path === doc?.path) return
+  // ---------------------------------------------------------------- 侧栏点选：抽屉 → 解析或预览
+
+  const openDrawer = (path: string, view: FileDrawerView) =>
+    setDrawer((d) => ({ path, view, open: true, seq: (d?.seq ?? 0) + 1 }))
+  const closeDrawer = () => setDrawer((d) => d && { ...d, open: false })
+
+  const selectPath = (path: string) => {
+    if (!project || pending || path === preview?.path) return
+    if (path === doc?.path) {
+      setPreview(null) // 回到已打开的结果
+      return
+    }
+    openDrawer(path, "menu")
+  }
+
+  // 抽屉里确认的配置写回设置，并用它解析
+  const parse = async (path: string, settings: ParseSettings) => {
+    if (!project) return
+    closeDrawer()
+    if (!confirmReplace()) return
     try {
-      openFile(await readPdf(project, path), path)
+      const file = await readPdf(project, path)
+      setConvertOpts(settings.convert)
+      setDraft(settings.chunk)
+      convert(file, path, settings)
     } catch (e) {
       fail("无法读取文件", e)
     }
   }
+
+  const previewPath = async (path: string) => {
+    if (!project) return
+    closeDrawer()
+    try {
+      const file = await readPdf(project, path)
+      setPreview({ path, url: URL.createObjectURL(file) })
+    } catch (e) {
+      fail("无法读取文件", e)
+    }
+  }
+
+  // 预览换掉或关闭时释放上一个 blob URL
+  useEffect(() => () => void (preview && URL.revokeObjectURL(preview.url)), [preview])
 
   const reconvert = () => {
     if (!doc) return
@@ -213,7 +258,7 @@ export default function App() {
   }
 
   const save = useCallback(async () => {
-    if (!project?.writable || !doc || pending) return
+    if (!project?.writable || !doc || pending || saveState !== "idle") return
     // 拖入的目录外文件保存到项目根目录
     const target = doc.path ?? doc.file.name
     const existed = project.files.some((f) => f.path === target && f.converted)
@@ -221,16 +266,25 @@ export default function App() {
       if (!window.confirm(`${mdName(target)} 已存在，确定覆盖？`)) return
       overwriteOk.current = doc.jobId
     }
+    setSaveState("loading")
     try {
-      const written = await writeMarkdown(project, target, markdown)
+      await writeMarkdown(project, target, markdown)
       overwriteOk.current = doc.jobId
       setUnsaved(false)
       setProject((p) => p && { ...p, files: p.files.map((f) => (f.path === target ? { ...f, converted: true } : f)) })
-      showPolishedToast({ title: `已保存 ${written}`, rimVariant: "success" })
+      setSaveState("success")
     } catch (e) {
       fail("保存失败", e)
+      setSaveState("error")
     }
-  }, [project, doc, pending, markdown])
+  }, [project, doc, pending, saveState, markdown])
+
+  // 保存按钮的成功 / 失败状态停留片刻后恢复
+  useEffect(() => {
+    if (saveState !== "success" && saveState !== "error") return
+    const t = window.setTimeout(() => setSaveState("idle"), 1800)
+    return () => clearTimeout(t)
+  }, [saveState])
 
   useEffect(() => {
     if (!project?.writable) return
@@ -253,17 +307,26 @@ export default function App() {
 
   // ---------------------------------------------------------------- 项目
 
-  const leave = () => {
-    if (unsaved && doc && !window.confirm("当前结果还未保存，确定离开项目？")) return
-    if (pending && !window.confirm("正在转换，确定离开项目？")) return
-    runRef.current += 1
-    if (pollRef.current) clearTimeout(pollRef.current)
-    setPending(null)
-    setDoc(null)
-    setMarkdown("")
-    setEdited(false)
-    setUnsaved(false)
-    setProject(null)
+  // 先确认再打开：用户取消目录选择时，当前项目和结果保持不变
+  const switchProject = async (task: () => Promise<Project | null>) => {
+    if (unsaved && doc && !window.confirm("当前结果还未保存，确定切换项目？")) return
+    if (pending && !window.confirm("正在转换，确定切换项目？")) return
+    try {
+      const next = await task()
+      if (!next) return
+      runRef.current += 1
+      if (pollRef.current) clearTimeout(pollRef.current)
+      setPending(null)
+      setDoc(null)
+      setMarkdown("")
+      setEdited(false)
+      setUnsaved(false)
+      setPreview(null)
+      setDrawer(null)
+      setProject(next)
+    } catch (e) {
+      fail("无法打开目录", e)
+    }
   }
 
   const refresh = async () => {
@@ -279,7 +342,7 @@ export default function App() {
     <TooltipProvider delay={350}>
       {project ? (
         <Workspace
-          activePath={pending ? (pending.path ?? null) : (doc?.path ?? null)}
+          activePath={pending ? (pending.path ?? null) : (preview?.path ?? doc?.path ?? null)}
           busy={busy}
           convert={convertOpts}
           doc={doc}
@@ -290,15 +353,19 @@ export default function App() {
           onDownload={download}
           onDraft={setDraft}
           onFile={openFile}
-          onLeave={leave}
+          onSwitchProject={switchProject}
+          onClosePreview={() => setPreview(null)}
+          onParsePreview={() => preview && openDrawer(preview.path, "config")}
           onMarkdown={onMarkdown}
           onReconvert={reconvert}
           onRefresh={refresh}
           onSave={save}
           onSelectPath={selectPath}
           pending={pending}
+          preview={preview}
           pendingOverwrite={othersChanged && edited}
           project={project}
+          saveState={saveState}
           reconvertable={!!doc && !sameConvert(convertOpts, usedConvert)}
           separator={applied.separator}
         />
@@ -312,7 +379,19 @@ export default function App() {
           </div>
         </div>
       )}
-      <PolishedToaster />
+      {project && drawer && (
+        <FileDrawer
+          initialView={drawer.view}
+          key={drawer.seq}
+          onClose={closeDrawer}
+          onParse={(settings) => parse(drawer.path, settings)}
+          onPreview={() => previewPath(drawer.path)}
+          open={drawer.open}
+          path={drawer.path}
+          settings={{ convert: convertOpts, chunk: draft }}
+        />
+      )}
+      <Toaster />
     </TooltipProvider>
   )
 }
