@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { HaloInput } from "@/components/ui/halo-input"
 import { HaloSegmented } from "@/components/ui/halo-segmented"
 import { HaloSwitch } from "@/components/ui/halo-switch"
+import { Hint } from "@/components/hint"
 
 interface SettingsRailProps {
   convert: ConvertOptions
@@ -39,6 +40,13 @@ function SwitchRow({ label, checked, onChange }: { label: string; checked: boole
   )
 }
 
+/** 分段选项的文字加悬停说明 */
+const tip = (label: string, hint: string) => (
+  <Hint label={hint}>
+    <span>{label}</span>
+  </Hint>
+)
+
 const num = (v: string, fallback: number) => (v.trim() === "" ? fallback : Math.max(0, Math.round(Number(v) || 0)))
 
 export function SettingsRail(props: SettingsRailProps) {
@@ -53,9 +61,9 @@ export function SettingsRail(props: SettingsRailProps) {
         <HaloSegmented
           className="w-full"
           items={[
-            { value: "auto", label: "自动" },
-            { value: "force", label: "全部" },
-            { value: "off", label: "关闭" },
+            { value: "auto", label: tip("自动", "仅对没有文字层或文字乱码的页面做 OCR") },
+            { value: "force", label: tip("全部", "所有含图像的页面都重新 OCR") },
+            { value: "off", label: tip("关闭", "只提取文字层，不做 OCR") },
           ]}
           onValueChange={(v) => setConvert("ocr_mode", v as OcrMode)}
           value={convert.ocr_mode}
@@ -64,9 +72,9 @@ export function SettingsRail(props: SettingsRailProps) {
           <HaloSegmented
             className="w-full"
             items={[
-              { value: "150", label: "150 dpi" },
-              { value: "200", label: "200 dpi" },
-              { value: "300", label: "300 dpi" },
+              { value: "150", label: tip("150 dpi", "更快，小字号和表格数字可能出错") },
+              { value: "200", label: tip("200 dpi", "速度与准确率均衡") },
+              { value: "300", label: tip("300 dpi", "更准，速度较慢") },
             ]}
             onValueChange={(v) => setConvert("ocr_dpi", Number(v))}
             value={String(convert.ocr_dpi)}
@@ -78,10 +86,12 @@ export function SettingsRail(props: SettingsRailProps) {
           onChange={(v) => setConvert("remove_header_footer", v)}
         />
         {props.reconvertable && (
-          <Button disabled={props.busy} onClick={props.onReconvert} variant="outline">
-            <RotateCcw />
-            重新转换
-          </Button>
+          <Hint label="按新的识别设置重新解析当前文件">
+            <Button disabled={props.busy} onClick={props.onReconvert} variant="outline">
+              <RotateCcw />
+              重新转换
+            </Button>
+          </Hint>
         )}
       </Field>
 
@@ -118,9 +128,9 @@ export function SettingsRail(props: SettingsRailProps) {
         <HaloSegmented
           className="w-full"
           items={[
-            { value: "breadcrumb", label: "路径" },
-            { value: "headings", label: "标题" },
-            { value: "none", label: "无" },
+            { value: "breadcrumb", label: tip("路径", "每块开头加一行“章节路径 ｜ 页码”") },
+            { value: "headings", label: tip("标题", "每块开头重复各级上级标题") },
+            { value: "none", label: tip("无", "不添加章节信息") },
           ]}
           onValueChange={(v) => set("context", v as ContextMode)}
           value={value.context}
@@ -132,8 +142,8 @@ export function SettingsRail(props: SettingsRailProps) {
         <HaloSegmented
           className="w-full"
           items={[
-            { value: "markdown", label: "表格" },
-            { value: "kv", label: "键值" },
+            { value: "markdown", label: tip("表格", "保留为 Markdown 表格") },
+            { value: "kv", label: tip("键值", "每行转为“列名：值”，宽表检索更准") },
           ]}
           onValueChange={(v) => set("table_mode", v as TableMode)}
           value={value.table_mode}
@@ -148,10 +158,12 @@ export function SettingsRail(props: SettingsRailProps) {
       </Field>
 
       {props.pendingOverwrite && (
-        <Button className="mt-auto" disabled={props.busy} onClick={props.onApply} variant="destructive">
-          <RefreshCw className={props.busy ? "animate-spin" : undefined} />
-          覆盖编辑并应用
-        </Button>
+        <Hint label="按新参数重新分块，手动修改将丢失" side="top">
+          <Button className="mt-auto" disabled={props.busy} onClick={props.onApply} variant="destructive">
+            <RefreshCw className={props.busy ? "animate-spin" : undefined} />
+            覆盖编辑并应用
+          </Button>
+        </Hint>
       )}
     </aside>
   )

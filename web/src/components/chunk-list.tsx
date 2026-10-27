@@ -6,6 +6,7 @@ import { describeChunk, renderMarkdown, stripContext } from "@/lib/chunks"
 import { Button } from "@/components/ui/button"
 import { HaloSegmented } from "@/components/ui/halo-segmented"
 import { HaloTextarea } from "@/components/ui/halo-input"
+import { Hint, Keys } from "@/components/hint"
 
 interface ChunkListProps {
   chunks: string[]
@@ -108,13 +109,15 @@ const ChunkCard = memo(function ChunkCard({ index, view, state, isLast, onSave, 
           {view.chars} 字
         </span>
         {view.page !== null && (
-          <button
-            className="rounded-full bg-muted px-2 py-0.5 tabular-nums text-foreground/80 transition-colors hover:bg-primary hover:text-primary-foreground"
-            onClick={() => onPage(view.page!)}
-            type="button"
-          >
-            P{view.pages}
-          </button>
+          <Hint label={`在原文中查看第 ${view.pages} 页`}>
+            <button
+              className="rounded-full bg-muted px-2 py-0.5 tabular-nums text-foreground/80 transition-colors hover:bg-primary hover:text-primary-foreground"
+              onClick={() => onPage(view.page!)}
+              type="button"
+            >
+              P{view.pages}
+            </button>
+          </Hint>
         )}
         <span className="min-w-0 flex-1 truncate" title={view.path}>
           {view.path}
@@ -122,26 +125,36 @@ const ChunkCard = memo(function ChunkCard({ index, view, state, isLast, onSave, 
         <div className="flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
           {draft === null ? (
             <>
-              <Button aria-label="编辑" onClick={() => setDraft(view.text)} size="icon-xs" variant="ghost">
-                <Pencil />
-              </Button>
-              {!isLast && (
-                <Button aria-label="与下一块合并" onClick={onMerge} size="icon-xs" variant="ghost">
-                  <Combine />
+              <Hint label={<>编辑 <Keys>双击</Keys></>}>
+                <Button aria-label="编辑" onClick={() => setDraft(view.text)} size="icon-xs" variant="ghost">
+                  <Pencil />
                 </Button>
+              </Hint>
+              {!isLast && (
+                <Hint label="与下一块合并">
+                  <Button aria-label="与下一块合并" onClick={onMerge} size="icon-xs" variant="ghost">
+                    <Combine />
+                  </Button>
+                </Hint>
               )}
-              <Button aria-label="删除" onClick={onRemove} size="icon-xs" variant="ghost">
-                <Trash2 />
-              </Button>
+              <Hint label="删除此块">
+                <Button aria-label="删除" onClick={onRemove} size="icon-xs" variant="ghost">
+                  <Trash2 />
+                </Button>
+              </Hint>
             </>
           ) : (
             <>
-              <Button aria-label="保存" onClick={() => (onSave(draft), setDraft(null))} size="icon-xs" variant="ghost">
-                <Check />
-              </Button>
-              <Button aria-label="取消" onClick={() => setDraft(null)} size="icon-xs" variant="ghost">
-                <X />
-              </Button>
+              <Hint label={<>保存 <Keys>Ctrl / ⌘ + Enter</Keys></>}>
+                <Button aria-label="保存" onClick={() => (onSave(draft), setDraft(null))} size="icon-xs" variant="ghost">
+                  <Check />
+                </Button>
+              </Hint>
+              <Hint label={<>取消 <Keys>Esc</Keys></>}>
+                <Button aria-label="取消" onClick={() => setDraft(null)} size="icon-xs" variant="ghost">
+                  <X />
+                </Button>
+              </Hint>
             </>
           )}
         </div>

@@ -10,6 +10,7 @@ import { HaloBadge } from "@/components/ui/halo-badge"
 import { HaloTextarea } from "@/components/ui/halo-input"
 import { HaloTabs, HaloTabsContent, HaloTabsIndicator, HaloTabsList, HaloTabsTrigger } from "@/components/ui/halo-tabs"
 import { ChunkFilterBar, ChunkList, type ChunkFilter } from "@/components/chunk-list"
+import { Hint } from "@/components/hint"
 import { SettingsRail } from "@/components/settings-rail"
 import { ConvertingStage, EmptyStage, type Pending } from "@/components/stage"
 
@@ -49,9 +50,11 @@ export function Workspace(props: WorkspaceProps) {
   return (
     <div className="grid h-svh grid-rows-[auto_1fr]">
       <header className="flex items-center gap-3 border-border/60 border-b px-5 py-3">
-        <Button aria-label="新文件" disabled={!!pending} onClick={() => pickRef.current?.click()} size="icon" variant="ghost">
-          <FilePlus2 />
-        </Button>
+        <Hint label="打开新的 PDF（也可直接拖入页面）">
+          <Button aria-label="新文件" disabled={!!pending} onClick={() => pickRef.current?.click()} size="icon" variant="ghost">
+            <FilePlus2 />
+          </Button>
+        </Hint>
         <input
           accept="application/pdf,.pdf"
           className="hidden"
@@ -73,20 +76,37 @@ export function Workspace(props: WorkspaceProps) {
         {ready && <DocBadges result={doc.result} chunks={splitChunks(markdown, separator).length} />}
         <div className="ml-auto flex items-center gap-1">
           {ready && (
-            <Button
-              aria-label={pdfOpen ? "收起原文" : "对照原文"}
-              onClick={() => setPdfOpen((v) => !v)}
-              size="icon"
-              variant="ghost"
-            >
-              {pdfOpen ? <PanelRightClose /> : <PanelRightOpen />}
+            <Hint label={pdfOpen ? "收起原文" : "对照原文 PDF"}>
+              <Button
+                aria-label={pdfOpen ? "收起原文" : "对照原文"}
+                onClick={() => setPdfOpen((v) => !v)}
+                size="icon"
+                variant="ghost"
+              >
+                {pdfOpen ? <PanelRightClose /> : <PanelRightOpen />}
+              </Button>
+            </Hint>
+          )}
+          {ready ? (
+            <Hint label="复制全部 Markdown">
+              <CopyButton aria-label="复制全部 Markdown" value={markdown} />
+            </Hint>
+          ) : (
+            <CopyButton disabled value="" />
+          )}
+          {ready ? (
+            <Hint label="下载可直接导入 FastGPT 的 Markdown">
+              <Button className="ml-1" onClick={props.onDownload} size="lg">
+                <Download />
+                下载 .md
+              </Button>
+            </Hint>
+          ) : (
+            <Button className="ml-1" disabled size="lg">
+              <Download />
+              下载 .md
             </Button>
           )}
-          <CopyButton disabled={!ready} value={markdown} />
-          <Button className="ml-1" disabled={!ready} onClick={props.onDownload} size="lg">
-            <Download />
-            下载 .md
-          </Button>
         </div>
       </header>
 

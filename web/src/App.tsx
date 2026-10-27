@@ -5,6 +5,7 @@ import type { ChunkOptions, ConvertOptions } from "@/lib/api"
 import { createJob, DEFAULT_CHUNK, DEFAULT_CONVERT, getJob, rechunk } from "@/lib/api"
 import { useStored } from "@/lib/use-stored"
 import { PolishedToaster, showPolishedToast } from "@/components/ui/halo-toast"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import type { Pending } from "@/components/stage"
 import { Workspace, type Doc } from "@/components/workspace"
 
@@ -198,7 +199,7 @@ export default function App() {
   }, [unsaved])
 
   return (
-    <>
+    <TooltipProvider delay={350}>
       <Workspace
         busy={busy}
         convert={convertOpts}
@@ -225,6 +226,6 @@ export default function App() {
         </div>
       )}
       <PolishedToaster />
-    </>
+    </TooltipProvider>
   )
 }
