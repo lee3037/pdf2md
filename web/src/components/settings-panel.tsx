@@ -1,29 +1,19 @@
 import { useId, type ReactNode } from "react"
 import { Collapsible } from "@base-ui/react/collapsible"
-import { ChevronRight, RefreshCw, RotateCcw } from "lucide-react"
+import { ChevronRight } from "lucide-react"
 
 import type { ChunkOptions, ContextMode, ConvertOptions, OcrMode, TableMode } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
 import { AnimatedSwitch } from "@/components/spectrumui/animated-switch"
 import { ModelSelector } from "@/components/spectrumui/blocks/ai-assistants/model-selector"
-import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm"
 import { QuantityStepper } from "@/components/spectrumui/quantity-stepper"
-import { Hint } from "@/components/hint"
 import { SeparatorCombobox } from "@/components/separator-combobox"
 
 interface SettingsPanelProps {
   convert: ConvertOptions
   onConvert: (o: ConvertOptions) => void
-  /** 识别参数与当前结果不一致：可用同一文件重新转换 */
-  reconvertable: boolean
-  onReconvert: () => void
   value: ChunkOptions
   onChange: (o: ChunkOptions) => void
-  /** 有手动编辑时分块参数改动不自动应用，显示覆盖按钮 */
-  pendingOverwrite: boolean
-  busy: boolean
-  onApply: () => void
   className?: string
 }
 
@@ -112,14 +102,6 @@ export function SettingsPanel(props: SettingsPanelProps) {
           label="去页眉页脚"
           onChange={(v) => setConvert("remove_header_footer", v)}
         />
-        {props.reconvertable && (
-          <Hint label="按新的识别设置重新解析当前文件">
-            <Button disabled={props.busy} onClick={props.onReconvert} variant="outline">
-              <RotateCcw />
-              重新转换
-            </Button>
-          </Hint>
-        )}
       </Section>
 
       <Section title="分块">
@@ -187,22 +169,6 @@ export function SettingsPanel(props: SettingsPanelProps) {
           />
         </Row>
       </Section>
-
-      {props.pendingOverwrite && (
-        <Hint label="按住确认：按新参数重新分块，手动修改将丢失" side="top">
-          <span className="flex">
-            <HoldToConfirmButton
-              className="w-full"
-              confirmedLabel="已应用"
-              disabled={props.busy}
-              icon={<RefreshCw size={12} />}
-              label="覆盖编辑并应用"
-              onConfirm={props.onApply}
-              size="sm"
-            />
-          </span>
-        </Hint>
-      )}
     </div>
   )
 }

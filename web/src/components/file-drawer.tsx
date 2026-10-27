@@ -27,6 +27,7 @@ interface FileDrawerProps {
   onParse: (settings: ParseSettings) => void
   onPreview: () => void
   onClose: () => void
+  reparse?: boolean
 }
 
 const TONES = {
@@ -72,7 +73,7 @@ function Header({ title, onClose }: { title: string; onClose: () => void }) {
  * 点选 PDF 后弹出的底部抽屉：先选操作，再确认本次解析配置。
  * 改写自 Spectrum UI 的 Animated Drawer：切换内容时高度跟随实际内容平滑变化。
  */
-export function FileDrawer({ path, open, initialView, settings, onParse, onPreview, onClose }: FileDrawerProps) {
+export function FileDrawer({ path, open, initialView, settings, onParse, onPreview, onClose, reparse = false }: FileDrawerProps) {
   const [view, setView] = useState(initialView)
   const [draft, setDraft] = useState(settings)
   const [contentRef, bounds] = useMeasure()
@@ -110,15 +111,10 @@ export function FileDrawer({ path, open, initialView, settings, onParse, onPrevi
                   <Header onClose={onClose} title="解析配置" />
                   <div className="-mx-6 mt-2 max-h-[min(60svh,560px)] overflow-y-auto">
                     <SettingsPanel
-                      busy={false}
                       className="px-6"
                       convert={draft.convert}
-                      onApply={() => {}}
                       onChange={(chunk) => setDraft((d) => ({ ...d, chunk }))}
                       onConvert={(convert) => setDraft((d) => ({ ...d, convert }))}
-                      onReconvert={() => {}}
-                      pendingOverwrite={false}
-                      reconvertable={false}
                       value={draft.chunk}
                     />
                   </div>
@@ -129,9 +125,13 @@ export function FileDrawer({ path, open, initialView, settings, onParse, onPrevi
                     >
                       {initialView === "config" ? "取消" : "返回"}
                     </Button>
-                    <Button className="h-11 flex-1 rounded-3xl bg-sky-400 text-white hover:bg-sky-500" onClick={() => onParse(draft)}>
+                    <Button
+                      className="h-11 flex-1 rounded-3xl bg-sky-400 text-white hover:bg-sky-500"
+                      disabled={!draft.chunk.separator.trim() || draft.chunk.max_chars < 100 || draft.chunk.min_chars > draft.chunk.max_chars}
+                      onClick={() => onParse(draft)}
+                    >
                       <Layers />
-                      开始解析
+                      {reparse ? "重新解析分块" : "开始解析"}
                     </Button>
                   </div>
                 </>

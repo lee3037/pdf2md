@@ -13,12 +13,12 @@ interface ProjectNavProps {
   locked: boolean
   onSelect: (path: string) => void
   onRefresh: () => void
-  /** 打开目录外的 PDF */
-  onFile: (file: File) => void
+  /** 将所选 PDF 复制到当前项目目录 */
+  onAddPdf: (file: File) => void
 }
 
 /** 左栏上半部分：项目目录中的全部 PDF。 */
-export function ProjectNav({ project, active, locked, onSelect, onRefresh, onFile }: ProjectNavProps) {
+export function ProjectNav({ project, active, locked, onSelect, onRefresh, onAddPdf }: ProjectNavProps) {
   const pickRef = useRef<HTMLInputElement>(null)
   const items = useMemo(
     () =>
@@ -38,11 +38,11 @@ export function ProjectNav({ project, active, locked, onSelect, onRefresh, onFil
           PDF {project.files.length}
           {converted > 0 && ` · 已转换 ${converted}`}
         </span>
-        <Hint label="打开目录外的 PDF（也可直接拖入页面）">
+        <Hint label={project.writable ? "添加 PDF 到当前项目目录" : "当前项目为只读，无法添加 PDF"}>
           <Button
-            aria-label="新文件"
+            aria-label="添加 PDF"
             className="ml-auto"
-            disabled={locked}
+            disabled={locked || !project.writable}
             onClick={() => pickRef.current?.click()}
             size="icon-sm"
             variant="ghost"
@@ -56,7 +56,7 @@ export function ProjectNav({ project, active, locked, onSelect, onRefresh, onFil
           onChange={(e) => {
             const f = e.target.files?.[0]
             e.target.value = ""
-            if (f) onFile(f)
+            if (f) onAddPdf(f)
           }}
           ref={pickRef}
           type="file"
