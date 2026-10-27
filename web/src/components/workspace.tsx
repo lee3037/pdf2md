@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState } from "react"
-import { Download, FilePlus2, PanelRightClose, PanelRightOpen } from "lucide-react"
+import { ChevronsUpDown, Download, FilePlus2, FolderOpen, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save } from "lucide-react"
 
 import type { ChunkOptions, ConvertOptions, ConvertResult } from "@/lib/api"
 import { pdfUrl } from "@/lib/api"
+import type { Project } from "@/lib/project"
 import { joinChunks, renderMarkdown, splitChunks } from "@/lib/chunks"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
@@ -10,17 +11,26 @@ import { HaloBadge } from "@/components/ui/halo-badge"
 import { HaloTextarea } from "@/components/ui/halo-input"
 import { HaloTabs, HaloTabsContent, HaloTabsIndicator, HaloTabsList, HaloTabsTrigger } from "@/components/ui/halo-tabs"
 import { ChunkFilterBar, ChunkList, type ChunkFilter } from "@/components/chunk-list"
-import { Hint } from "@/components/hint"
+import { Hint, Keys } from "@/components/hint"
+import { ProjectNav } from "@/components/project-nav"
 import { SettingsRail } from "@/components/settings-rail"
 import { ConvertingStage, EmptyStage, type Pending } from "@/components/stage"
 
 export interface Doc {
   jobId: string
   file: File
+  /** 项目内的相对路径；拖入的外部文件没有 */
+  path?: string
   result: ConvertResult
 }
 
 interface WorkspaceProps {
+  project: Project
+  /** 导航中高亮的文件（转换中或已打开） */
+  activePath: string | null
+  onSelectPath: (path: string) => void
+  onRefresh: () => void
+  onLeave: () => void
   doc: Doc | null
   pending: Pending | null
   onFile: (file: File) => void
@@ -37,11 +47,13 @@ interface WorkspaceProps {
   busy: boolean
   onApply: () => void
   onDownload: () => void
+  onSave: () => void
 }
 
 export function Workspace(props: WorkspaceProps) {
-  const { doc, pending, markdown, separator } = props
+  const { project, doc, pending, markdown, separator } = props
   const [pdfOpen, setPdfOpen] = useState(() => window.innerWidth >= 1500)
+  const [navOpen, setNavOpen] = useState(true)
   const [page, setPage] = useState<number | null>(null)
   const pickRef = useRef<HTMLInputElement>(null)
   const ready = doc !== null && pending === null
@@ -50,7 +62,21 @@ export function Workspace(props: WorkspaceProps) {
   return (
     <div className="grid h-svh grid-rows-[auto_1fr]">
       <header className="flex items-center gap-3 border-border/60 border-b px-5 py-3">
-        <Hint label="打开新的 PDF（也可直接拖入页面）">
+        <Hint label={navOpen ? "收起文件列表" : "展开文件列表"}>
+          <Button aria-label={navOpen ? "收起文件列表" : "展开文件列表"} onClick={() => setNavOpen((v) => !v)} size="icon" variant="ghost">
+            {navOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
+          </Button>
+        </Hint>
+        <Hint label="切换项目">
+          <Button className="max-w-56 gap-2 px-2" onClick={props.onLeave} variant="ghost">
+            <FolderOpen />
+            <span className="truncate">{project.name}</span>
+            {!project.writable && <HaloBadge variant="outline">只读</HaloBadge>}
+            <ChevronsUpDown className="text-muted-foreground" />
+          </Button>
+        </Hint>
+        <span className="text-muted-foreground/60">/</span>
+        <Hint label="打开目录外的 PDF（也可直接拖入页面）">
           <Button aria-label="新文件" disabled={!!pending} onClick={() => pickRef.current?.click()} size="icon" variant="ghost">
             <FilePlus2 />
           </Button>
@@ -67,11 +93,7 @@ export function Workspace(props: WorkspaceProps) {
           type="file"
         />
         <h1 className="min-w-0 truncate font-medium" title={title}>
-          {title ?? (
-            <>
-              PDF <span className="text-muted-foreground">→</span> FastGPT 知识库
-            </>
-          )}
+          {title ?? <span className="text-muted-foreground">未选择文件</span>}
         </h1>
         {ready && <DocBadges result={doc.result} chunks={splitChunks(markdown, separator).length} />}
         <div className="ml-auto flex items-center gap-1">
@@ -94,7 +116,27 @@ export function Workspace(props: WorkspaceProps) {
           ) : (
             <CopyButton disabled value="" />
           )}
-          {ready ? (
+          {project.writable && (
+            <Hint label="下载 .md">
+              <Button aria-label="下载 .md" disabled={!ready} onClick={props.onDownload} size="icon" variant="ghost">
+                <Download />
+              </Button>
+            </Hint>
+          )}
+          {project.writable ? (
+            <Hint
+              label={
+                <>
+                  保存为 PDF 旁的同名 .md <Keys>Ctrl S</Keys>
+                </>
+              }
+            >
+              <Button className="ml-1" disabled={!ready} onClick={props.onSave} size="lg">
+                <Save />
+                保存到目录
+              </Button>
+            </Hint>
+          ) : ready ? (
             <Hint label="下载可直接导入 FastGPT 的 Markdown">
               <Button className="ml-1" onClick={props.onDownload} size="lg">
                 <Download />
@@ -110,7 +152,22 @@ export function Workspace(props: WorkspaceProps) {
         </div>
       </header>
 
-      <div className="grid min-h-0 grid-cols-[280px_minmax(0,1fr)_auto]">
+      <div
+        className={
+          navOpen
+            ? "grid min-h-0 grid-cols-[240px_280px_minmax(0,1fr)_auto]"
+            : "grid min-h-0 grid-cols-[280px_minmax(0,1fr)_auto]"
+        }
+      >
+        {navOpen && (
+          <ProjectNav
+            active={props.activePath}
+            locked={!!pending}
+            onRefresh={props.onRefresh}
+            onSelect={props.onSelectPath}
+            project={project}
+          />
+        )}
         <SettingsRail
           busy={props.busy || !!pending}
           convert={props.convert}
@@ -135,7 +192,10 @@ export function Workspace(props: WorkspaceProps) {
               separator={separator}
             />
           ) : (
-            <EmptyStage onFile={props.onFile} />
+            <EmptyStage
+              label={project.files.length ? "从左侧选择 PDF，或拖入目录外的 PDF" : "拖入 PDF 或点击选择"}
+              onFile={props.onFile}
+            />
           )}
         </main>
 

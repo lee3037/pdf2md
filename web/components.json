@@ -22,6 +22,7 @@
   "menuColor": "default",
   "menuAccent": "subtle",
   "registries": {
-    "@cult-ui": "https://www.cult-ui.com/r/{name}.json"
+    "@cult-ui": "https://www.cult-ui.com/r/{name}.json",
+    "@spectrumui": "https://spectrumhq.in/r/{name}.json"
   }
 }

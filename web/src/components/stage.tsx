@@ -5,19 +5,21 @@ import { HaloProgress } from "@/components/ui/halo-progress"
 
 export interface Pending {
   file: File
+  /** 项目内的相对路径 */
+  path?: string
   done: number
   total: number
   seconds: number
 }
 
 /** 未加载文档时的主区域：拖拽上传。 */
-export function EmptyStage({ onFile }: { onFile: (file: File) => void }) {
+export function EmptyStage({ label, onFile }: { label: string; onFile: (file: File) => void }) {
   return (
     <div className="flex h-full items-center justify-center px-6 pb-16">
       <div className="w-full max-w-xl" data-dropzone>
         <HaloDropzone
           accept="application/pdf,.pdf"
-          emptyLabel="拖入 PDF 或点击选择"
+          emptyLabel={label}
           formatHint={null}
           onFiles={(files) => files[0] && onFile(files[0])}
           showSuccessThumbnails={false}
