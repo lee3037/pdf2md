@@ -16,6 +16,6 @@ export default defineConfig({
     chunkSizeWarningLimit: 1500,
   },
   server: {
-    proxy: { '/api': process.env.PDF2MD_API ?? 'http://localhost:8765' },
+    proxy: { '/api': process.env.STRATUM_API ?? 'http://localhost:8765' },
   },
 })

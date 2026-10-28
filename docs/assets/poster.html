@@ -1,0 +1,141 @@
+<!doctype html>
+<!--
+  README 宣传海报的源文件。修改后在仓库根目录执行以下命令，重新生成 poster.png：
+
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars \
+    --window-size=1280,640 --force-device-scale-factor=2 \
+    --screenshot=docs/assets/poster.png docs/assets/poster.html
+
+  logo 图形与 web/public/favicon.svg 保持一致。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    background:
+      radial-gradient(640px 420px at 88% 30%, rgba(99, 102, 241, .22), transparent 70%),
+      radial-gradient(520px 360px at 10% 110%, rgba(99, 102, 241, .12), transparent 70%),
+      #0a0a0a;
+    color: #fafafa;
+    font-family: -apple-system, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif;
+    display: grid;
+    grid-template-columns: 560px 1fr;
+    padding: 72px 72px 64px 80px;
+  }
+  /* 背景网格，只在右侧可见 */
+  body::before {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: linear-gradient(90deg, transparent 35%, #000 75%);
+  }
+  .brand { position: relative; display: flex; flex-direction: column; justify-content: center; }
+  .logo { width: 88px; height: 88px; }
+  h1 { margin-top: 28px; font-size: 92px; font-weight: 800; letter-spacing: -.035em; line-height: 1; }
+  h1 small { margin-left: 16px; font-size: 44px; font-weight: 600; letter-spacing: 0; color: #a3a3a3; }
+  .tagline { margin-top: 24px; font-size: 30px; font-weight: 600; line-height: 1.35; }
+  .tagline em { font-style: normal; color: #a5b4fc; }
+  .sub { margin-top: 12px; font-size: 19px; color: #a3a3a3; line-height: 1.5; }
+  .chips { margin-top: 32px; display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip {
+    font-size: 15px; padding: 7px 14px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04); color: #d4d4d4;
+  }
+
+  .scene { position: relative; }
+  /* 左：原始 PDF 页面 */
+  .page {
+    position: absolute; left: -16px; top: 36px; width: 250px; height: 340px;
+    background: #fafafa; border-radius: 10px; padding: 22px 20px;
+    transform: rotate(-6deg); box-shadow: 0 30px 60px -20px rgba(0,0,0,.8);
+  }
+  .page .hdr { height: 6px; width: 40%; background: #d4d4d4; border-radius: 3px; margin-bottom: 18px; }
+  .page .h { height: 11px; width: 70%; background: #262626; border-radius: 3px; margin-bottom: 14px; }
+  .page .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .page .ln { height: 6px; background: #a3a3a3; border-radius: 3px; margin-bottom: 8px; }
+  .page .tbl { margin-top: 10px; display: grid; grid-template-columns: repeat(3, 1fr); border: 1.5px solid #737373; border-radius: 3px; }
+  .page .tbl i { height: 15px; border-right: 1px solid #a3a3a3; border-bottom: 1px solid #a3a3a3; }
+  .page .tbl i:nth-child(3n) { border-right: 0; }
+  .page .tbl i:nth-child(-n+3) { background: #e5e5e5; }
+  .page .ftr { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); width: 28px; height: 6px; background: #d4d4d4; border-radius: 3px; }
+
+  .arrow {
+    position: absolute; left: 228px; top: 196px; width: 56px; height: 2px;
+    background: linear-gradient(90deg, rgba(165,180,252,0), #a5b4fc);
+  }
+  .arrow::after {
+    content: ""; position: absolute; right: -2px; top: -5px;
+    border: 6px solid transparent; border-left: 9px solid #a5b4fc; border-right: 0;
+  }
+
+  /* 右：分块后的 Markdown */
+  .chunks { position: absolute; left: 292px; top: 0; width: 290px; display: flex; flex-direction: column; gap: 8px; }
+  .chunk {
+    background: rgba(23,23,23,.92); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 12px; padding: 14px 16px;
+  }
+  .crumb { font-size: 12.5px; color: #a5b4fc; margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .crumb b { color: #6366f1; font-weight: 700; margin-right: 6px; }
+  .bar { height: 6px; border-radius: 3px; background: #404040; margin-top: 7px; }
+  .mini { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; margin-top: 8px; }
+  .mini i { height: 9px; border-radius: 2px; background: #333; }
+  .mini i:nth-child(-n+3) { background: #4b4b6b; }
+  .sep { font: 600 13px "SF Mono", "Menlo", monospace; color: #6366f1; letter-spacing: .04em; padding-left: 4px; }
+</style>
+</head>
+<body>
+  <section class="brand">
+    <svg class="logo" viewBox="0 0 32 32" fill="none">
+      <rect width="32" height="32" rx="8" fill="#171717"/>
+      <rect x="7" y="8" width="18" height="4" rx="2" fill="#6366f1"/>
+      <rect x="10.5" y="14" width="14.5" height="4" rx="2" fill="#fff"/>
+      <rect x="14" y="20" width="11" height="4" rx="2" fill="#fff" fill-opacity=".55"/>
+    </svg>
+    <h1>Stratum<small>层析</small></h1>
+    <p class="tagline">把 PDF 析成<em>可检索的知识块</em></p>
+    <p class="sub">文本型、扫描型 PDF 转换为按语义分块的 Markdown，<br>作为 RAG 知识库的前处理。</p>
+    <div class="chips">
+      <span class="chip">扫描件 OCR</span>
+      <span class="chip">标题层级</span>
+      <span class="chip">跨页表格合并</span>
+      <span class="chip">语义分块</span>
+      <span class="chip">逐块校对</span>
+    </div>
+  </section>
+
+  <section class="scene">
+    <div class="page">
+      <div class="hdr"></div>
+      <div class="h"></div>
+      <div class="cols">
+        <div><div class="ln"></div><div class="ln" style="width:90%"></div><div class="ln"></div><div class="ln" style="width:60%"></div><div class="ln"></div><div class="ln" style="width:80%"></div></div>
+        <div><div class="ln"></div><div class="ln"></div><div class="ln" style="width:70%"></div><div class="ln"></div><div class="ln" style="width:85%"></div><div class="ln" style="width:50%"></div></div>
+      </div>
+      <div class="tbl"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="ftr"></div>
+    </div>
+    <div class="arrow"></div>
+    <div class="chunks">
+      <div class="chunk">
+        <div class="crumb"><b>&gt;</b>章节：第二章 资产管理 &gt; 2.1 资产清单</div>
+        <div class="bar" style="width:92%"></div><div class="bar" style="width:100%"></div><div class="bar" style="width:64%"></div>
+      </div>
+      <div class="sep">===CHUNK===</div>
+      <div class="chunk">
+        <div class="crumb"><b>&gt;</b>章节：2.1 资产清单 ｜ 页码：2-3</div>
+        <div class="mini"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+      <div class="sep">===CHUNK===</div>
+      <div class="chunk">
+        <div class="crumb"><b>&gt;</b>章节：第三章 访问控制 ｜ 页码：4</div>
+        <div class="bar" style="width:100%"></div><div class="bar" style="width:78%"></div>
+      </div>
+    </div>
+  </section>
+</body>
+</html>

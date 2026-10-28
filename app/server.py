@@ -22,11 +22,11 @@ from pydantic import BaseModel
 from . import chunker, extract, pipeline
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
-WORKERS = int(os.environ.get("PDF2MD_WORKERS") or max(1, min(3, (os.cpu_count() or 2) // 2)))
-MAX_UPLOAD_MB = int(os.environ.get("PDF2MD_MAX_MB", "200"))
-MAX_PAGES = int(os.environ.get("PDF2MD_MAX_PAGES", "2000"))
-JOB_TTL = int(os.environ.get("PDF2MD_JOB_TTL", str(3 * 3600)))
-WORK_DIR = Path(os.environ.get("PDF2MD_WORK_DIR") or tempfile.mkdtemp(prefix="pdf2md-"))
+WORKERS = int(os.environ.get("STRATUM_WORKERS") or max(1, min(3, (os.cpu_count() or 2) // 2)))
+MAX_UPLOAD_MB = int(os.environ.get("STRATUM_MAX_MB", "200"))
+MAX_PAGES = int(os.environ.get("STRATUM_MAX_PAGES", "2000"))
+JOB_TTL = int(os.environ.get("STRATUM_JOB_TTL", str(3 * 3600)))
+WORK_DIR = Path(os.environ.get("STRATUM_WORK_DIR") or tempfile.mkdtemp(prefix="stratum-"))
 
 _pool: ProcessPoolExecutor | None = None
 _runner = ThreadPoolExecutor(max_workers=4, thread_name_prefix="job")
@@ -37,7 +37,7 @@ _lock = threading.Lock()
 def _get_pool() -> ProcessPoolExecutor:
     global _pool
     if _pool is None:
-        os.environ.setdefault("PDF2MD_OCR_THREADS", str(max(1, (os.cpu_count() or 2) // WORKERS)))
+        os.environ.setdefault("STRATUM_OCR_THREADS", str(max(1, (os.cpu_count() or 2) // WORKERS)))
         _pool = ProcessPoolExecutor(max_workers=WORKERS, mp_context=mp.get_context("spawn"),
                                     initializer=extract.worker_init)
     return _pool
@@ -56,7 +56,7 @@ async def lifespan(_app):
     shutil.rmtree(WORK_DIR, ignore_errors=True)
 
 
-app = FastAPI(title="PDF → FastGPT Markdown", lifespan=lifespan)
+app = FastAPI(title="Stratum 层析", lifespan=lifespan)
 
 
 def _cleanup_loop():

@@ -1,4 +1,5 @@
 import type { MarkdownFile, Project } from "@/lib/project"
+import { MarkdownIcon } from "@/components/file-type-icon"
 import { TreeNav } from "@/components/spectrumui/tree-nav"
 
 export interface ArtifactNavItem extends MarkdownFile {
@@ -31,6 +32,7 @@ export function ArtifactNav({ project, artifacts, currentPath, locked, onSelect 
             items={items.map((artifact) => ({
               label: artifact.path,
               href: href(artifact.path),
+              icon: <MarkdownIcon />,
               badge: artifact.unsaved ? "未保存" : undefined,
             }))}
             onSelect={(item, event) => {

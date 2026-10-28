@@ -124,7 +124,7 @@ async function fromHandle(handle: FileSystemDirectoryHandle, id: string): Promis
 /** 弹出系统目录选择框。用户取消时返回 null。 */
 export async function pickDirectory(): Promise<Project | null> {
   try {
-    const handle = await window.showDirectoryPicker!({ id: "pdf2md", mode: "readwrite" })
+    const handle = await window.showDirectoryPicker!({ id: "stratum", mode: "readwrite" })
     const recents = await loadRecents()
     // 同一目录再次选择时复用原记录
     let id: string | null = null
@@ -229,7 +229,7 @@ export interface RecentProject {
   openedAt: number
 }
 
-const DB = "pdf2md"
+const DB = "stratum"
 const STORE = "projects"
 const MAX_RECENTS = 6
 

@@ -9,6 +9,8 @@ import { usePrefersReducedMotion } from '@/components/spectrumui/use-typewriter'
 export interface TreeNavItem {
   label: string;
   href: string;
+  /** Leading icon before the label, e.g. a file-type mark. */
+  icon?: React.ReactNode;
   /** Small pill after the label, e.g. "New". */
   badge?: string;
   /** Opens in a new tab. */
@@ -204,6 +206,7 @@ export function TreeNav({
                   : 'font-normal text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100',
               )}
             >
+              {item.icon}
               <span className="truncate">{item.label}</span>
               {item.badge && (
                 <span className="inline-flex h-[18px] shrink-0 items-center rounded-[6px] bg-[#2b7fff]/8 px-[5px] text-xs font-medium leading-none text-[#1447e6] dark:bg-[#2b7fff]/[0.14] dark:text-blue-400">
