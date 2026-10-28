@@ -20,8 +20,14 @@ export interface ProjectFile {
   /** 相对项目根目录的路径，如 `合同/2024/a.pdf` */
   path: string
   size: number
-  /** 同目录下已有同名 .md */
+  /** 已有对应的 Markdown 产物 */
   converted: boolean
+}
+
+export interface MarkdownFile {
+  path: string
+  pdfPath: string
+  version: number
 }
 
 export interface Project {
@@ -30,6 +36,7 @@ export interface Project {
   /** false：只读打开（不支持写回的浏览器），结果需下载 */
   writable: boolean
   files: ProjectFile[]
+  artifacts: MarkdownFile[]
   handle?: FileSystemDirectoryHandle
   /** 只读模式下按路径保存选中的文件 */
   snapshot?: Map<string, File>
@@ -38,45 +45,66 @@ export interface Project {
 const MAX_DEPTH = 4
 const SKIP_DIR = /^(\.|node_modules$|__pycache__$)/
 const isPdfName = (n: string) => /\.pdf$/i.test(n)
-export const mdName = (pdf: string) => pdf.replace(/\.pdf$/i, "") + ".md"
-const byPath = (a: ProjectFile, b: ProjectFile) => a.path.localeCompare(b.path, "zh-CN", { numeric: true })
+export const mdName = (pdf: string, version: number) => `${pdf.replace(/\.pdf$/i, "")}_v${version}.md`
+const byPath = (a: { path: string }, b: { path: string }) => a.path.localeCompare(b.path, "zh-CN", { numeric: true })
 
 // ---------------------------------------------------------------- 扫描
 
-async function scanHandle(dir: DirHandle, prefix = "", depth = 0): Promise<ProjectFile[]> {
-  const pdfs: FileSystemFileHandle[] = []
-  const names = new Set<string>()
-  const nested: Promise<ProjectFile[]>[] = []
+interface ScannedFile { path: string; size: number }
+
+/** 同时识别带版本号的新产物和原有的无后缀 Markdown。 */
+function indexFiles(entries: ScannedFile[]) {
+  const pdfs = entries.filter((file) => isPdfName(file.path))
+  const pdfPaths = new Map(pdfs.map((file) => [file.path.toLowerCase(), file.path]))
+  const artifacts = entries.filter((file) => /\.md$/i.test(file.path)).flatMap(({ path }) => {
+    const stem = path.replace(/\.md$/i, "")
+    const legacyPdf = pdfPaths.get(`${stem}.pdf`.toLowerCase())
+    const versionMatch = legacyPdf ? null : stem.match(/^(.*)_v([1-9]\d*)$/i)
+    // 无对应 PDF 的普通文档（如 README.md）不属于解析产物。
+    if (!legacyPdf && !versionMatch) return []
+    const source = `${versionMatch?.[1] ?? stem}.pdf`
+    return [{
+      path,
+      pdfPath: legacyPdf ?? pdfPaths.get(source.toLowerCase()) ?? source,
+      version: versionMatch ? Number(versionMatch[2]) : 1,
+    }]
+  }).sort(byPath)
+  const converted = new Set(artifacts.map((artifact) => artifact.pdfPath))
+  const files = pdfs.map((file) => ({ ...file, converted: converted.has(file.path) })).sort(byPath)
+  return { files, artifacts }
+}
+
+async function scanHandle(dir: DirHandle, prefix = "", depth = 0): Promise<ScannedFile[]> {
+  const files: ScannedFile[] = []
+  const nested: Promise<ScannedFile[]>[] = []
   for await (const entry of dir.values()) {
-    if (entry.kind === "file") {
-      names.add(entry.name.toLowerCase())
-      if (isPdfName(entry.name)) pdfs.push(entry)
-    } else if (depth < MAX_DEPTH && !SKIP_DIR.test(entry.name)) {
+    if (entry.kind === "file" && /\.(pdf|md)$/i.test(entry.name)) {
+      files.push({ path: prefix + entry.name, size: (await entry.getFile()).size })
+    } else if (entry.kind === "directory" && depth < MAX_DEPTH && !SKIP_DIR.test(entry.name)) {
       nested.push(scanHandle(entry as DirHandle, `${prefix}${entry.name}/`, depth + 1))
     }
   }
-  const own = await Promise.all(
-    pdfs.map(async (h) => ({
-      path: prefix + h.name,
-      size: (await h.getFile()).size,
-      converted: names.has(mdName(h.name).toLowerCase()),
-    }))
-  )
-  return [...own, ...(await Promise.all(nested)).flat()]
+  return [...files, ...(await Promise.all(nested)).flat()]
 }
 
 function scanSnapshot(files: File[]) {
-  // webkitRelativePath 以所选目录名开头，去掉它
-  const rel = (f: File) => f.webkitRelativePath.split("/").slice(1).join("/") || f.name
-  const all = new Set(files.map((f) => rel(f).toLowerCase()))
   const snapshot = new Map<string, File>()
-  for (const f of files) {
-    const path = rel(f)
-    if (isPdfName(path) && path.split("/").length <= MAX_DEPTH + 1 && !path.split("/").some((s) => SKIP_DIR.test(s)))
-      snapshot.set(path, f)
+  for (const file of files) {
+    // webkitRelativePath 的首段是所选目录名。
+    const path = file.webkitRelativePath.split("/").slice(1).join("/") || file.name
+    if (/\.(pdf|md)$/i.test(path) && path.split("/").length <= MAX_DEPTH + 1 && !path.split("/").some((s) => SKIP_DIR.test(s))) {
+      snapshot.set(path, file)
+    }
   }
-  const list = [...snapshot].map(([path, f]) => ({ path, size: f.size, converted: all.has(mdName(path).toLowerCase()) }))
-  return { snapshot, files: list.sort(byPath) }
+  const entries = [...snapshot].map(([path, file]) => ({ path, size: file.size }))
+  return { snapshot, ...indexFiles(entries) }
+}
+
+/** 按目录和当前会话中已有的最大版本号递增，保留编号空缺。 */
+export function nextMarkdownFile(pdfPath: string, artifacts: MarkdownFile[]): MarkdownFile {
+  const versions = artifacts.filter((file) => file.pdfPath.toLowerCase() === pdfPath.toLowerCase()).map((file) => file.version)
+  const version = Math.max(0, ...versions) + 1
+  return { path: mdName(pdfPath, version), pdfPath, version }
 }
 
 // ---------------------------------------------------------------- 打开
@@ -89,8 +117,8 @@ async function ensurePermission(handle: FileSystemDirectoryHandle, ask: boolean)
 }
 
 async function fromHandle(handle: FileSystemDirectoryHandle, id: string): Promise<Project> {
-  const files = (await scanHandle(handle as DirHandle)).sort(byPath)
-  return { id, name: handle.name, writable: true, files, handle }
+  const inventory = indexFiles(await scanHandle(handle as DirHandle))
+  return { id, name: handle.name, writable: true, ...inventory, handle }
 }
 
 /** 弹出系统目录选择框。用户取消时返回 null。 */
@@ -127,7 +155,7 @@ export async function openRecent(recent: RecentProject): Promise<Project> {
 }
 
 export async function rescan(project: Project): Promise<Project> {
-  if (project.handle) return { ...project, files: (await scanHandle(project.handle as DirHandle)).sort(byPath) }
+  if (project.handle) return { ...project, ...indexFiles(await scanHandle(project.handle as DirHandle)) }
   return project
 }
 
@@ -140,7 +168,7 @@ async function walk(project: Project, path: string) {
   return { dir, name: parts[parts.length - 1] }
 }
 
-export async function readPdf(project: Project, path: string): Promise<File> {
+async function readProjectFile(project: Project, path: string): Promise<File> {
   if (project.snapshot) {
     const f = project.snapshot.get(path)
     if (!f) throw new Error(`找不到 ${path}`)
@@ -150,26 +178,45 @@ export async function readPdf(project: Project, path: string): Promise<File> {
   return (await dir.getFileHandle(name)).getFile()
 }
 
-/** 读取已有的同名 .md；不存在时返回 null。 */
-export async function readMarkdown(project: Project, pdfPath: string): Promise<string | null> {
-  if (!project.handle) return null
-  try {
-    const { dir, name } = await walk(project, pdfPath)
-    return await (await (await dir.getFileHandle(mdName(name))).getFile()).text()
-  } catch {
-    return null
-  }
+export const readPdf = readProjectFile
+
+/** 按产物的实际路径读取 Markdown。 */
+export async function readMarkdown(project: Project, path: string): Promise<string> {
+  return (await readProjectFile(project, path)).text()
 }
 
-/** 把 Markdown 写到 PDF 旁边（同名 .md，已存在则覆盖），返回写入的相对路径。 */
-export async function writeMarkdown(project: Project, pdfPath: string, markdown: string) {
+/** 将所选 PDF 复制到项目根目录，再扫描目录更新文件列表。 */
+export async function addPdfToProject(project: Project, file: File): Promise<Project> {
+  if (!project.writable || !project.handle) throw new Error("当前项目为只读，无法添加 PDF")
+  if (!(await ensurePermission(project.handle, true))) throw new Error("没有目录写入权限")
+  const root = project.handle as DirHandle
+  for await (const entry of root.values()) {
+    if (entry.name.toLowerCase() === file.name.toLowerCase()) {
+      throw new Error(`项目目录中已存在 ${file.name}`)
+    }
+  }
+  const handle = await root.getFileHandle(file.name, { create: true })
+  const writer = await handle.createWritable()
+  await writer.write(file)
+  await writer.close()
+  return rescan(project)
+}
+
+/** 新产物禁止覆盖同名文件；已保存产物的手动编辑由调用方明确允许覆盖。 */
+export async function writeMarkdown(project: Project, path: string, markdown: string, overwrite = false) {
   if (!(await ensurePermission(project.handle!, true))) throw new Error("没有目录写入权限")
-  const { dir, name } = await walk(project, pdfPath)
-  const fh = await dir.getFileHandle(mdName(name), { create: true })
-  const w = await fh.createWritable()
-  await w.write(markdown)
-  await w.close()
-  return mdName(pdfPath)
+  const { dir, name } = await walk(project, path)
+  if (!overwrite) {
+    for await (const entry of (dir as DirHandle).values()) {
+      if (entry.name.toLowerCase() === name.toLowerCase()) {
+        throw new Error(`${path} 已存在，请重新生成一个新版本`)
+      }
+    }
+  }
+  const fh = await dir.getFileHandle(name, { create: true })
+  const writer = await fh.createWritable()
+  await writer.write(markdown)
+  await writer.close()
 }
 
 // ---------------------------------------------------------------- 最近项目（IndexedDB，目录句柄可直接存）

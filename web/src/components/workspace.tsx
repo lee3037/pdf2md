@@ -1,101 +1,103 @@
-import { useMemo, useRef, useState } from "react"
-import { ChevronsUpDown, Download, FilePlus2, FolderOpen, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save } from "lucide-react"
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react"
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react"
 
-import type { ChunkOptions, ConvertOptions, ConvertResult } from "@/lib/api"
+import type { ChunkOptions, ConvertResult } from "@/lib/api"
 import { pdfUrl } from "@/lib/api"
 import type { Project } from "@/lib/project"
 import { joinChunks, renderMarkdown, splitChunks } from "@/lib/chunks"
 import { Button } from "@/components/ui/button"
-import { CopyButton } from "@/components/ui/copy-button"
-import { HaloBadge } from "@/components/ui/halo-badge"
-import { HaloTextarea } from "@/components/ui/halo-input"
-import { HaloTabs, HaloTabsContent, HaloTabsIndicator, HaloTabsList, HaloTabsTrigger } from "@/components/ui/halo-tabs"
+import { NumberTicker } from "@/components/motion/number-ticker"
+import { AutosizeTextarea } from "@/components/spectrumui/autosize-textarea"
+import { ModelSelector } from "@/components/spectrumui/blocks/ai-assistants/model-selector"
+import type { MorphButtonState } from "@/components/spectrumui/morph-button"
+import { UndoPill } from "@/components/spectrumui/undo-pill"
 import { ChunkFilterBar, ChunkList, type ChunkFilter } from "@/components/chunk-list"
-import { Hint, Keys } from "@/components/hint"
+import { Hint } from "@/components/hint"
 import { ProjectNav } from "@/components/project-nav"
-import { SettingsRail } from "@/components/settings-rail"
-import { ConvertingStage, EmptyStage, type Pending } from "@/components/stage"
+import { ProjectSwitcher } from "@/components/project-switcher"
+import { ArtifactNav, type ArtifactNavItem } from "@/components/artifact-nav"
+import { ResultActions } from "@/components/result-actions"
+import { ConvertingStage, EmptyStage, PreviewStage, type Pending } from "@/components/stage"
+
+/** 未解析的原文预览：本地文件的 blob URL */
+export interface Preview {
+  path: string
+  url: string
+}
 
 export interface Doc {
-  jobId: string
+  /** 从目录打开的 Markdown 没有服务端任务。 */
+  jobId: string | null
   file: File
   /** 项目内的相对路径；拖入的外部文件没有 */
   path?: string
-  result: ConvertResult
+  mdPath: string
+  result: ConvertResult | null
 }
 
 interface WorkspaceProps {
   project: Project
-  /** 导航中高亮的文件（转换中或已打开） */
+  /** 导航中高亮的文件（抽屉操作中、预览中、转换中或已打开） */
   activePath: string | null
   onSelectPath: (path: string) => void
   onRefresh: () => void
-  onLeave: () => void
+  onSwitchProject: (task: () => Promise<Project | null>) => void
   doc: Doc | null
   pending: Pending | null
+  preview: Preview | null
+  /** 从预览直接进入解析配置 */
+  onParsePreview: () => void
+  onClosePreview: () => void
+  onAddPdf: (file: File) => void
   onFile: (file: File) => void
   markdown: string
   separator: string
   onMarkdown: (md: string) => void
-  convert: ConvertOptions
-  onConvert: (o: ConvertOptions) => void
-  reconvertable: boolean
-  onReconvert: () => void
+  onReparse: () => void
+  onSelectArtifact: (path: string) => void
+  artifacts: ArtifactNavItem[]
   draft: ChunkOptions
-  onDraft: (o: ChunkOptions) => void
-  pendingOverwrite: boolean
   busy: boolean
-  onApply: () => void
   onDownload: () => void
   onSave: () => void
+  saveState: MorphButtonState
 }
 
+const SIDEBAR_WIDTH = 300 // 与下方 grid-cols-[300px_…] 保持一致
+const PDF_MIN_WIDTH = 360
+const MAIN_MIN_WIDTH = 480 // 拖宽 PDF 面板时给结果区保留的最小宽度
+
 export function Workspace(props: WorkspaceProps) {
-  const { project, doc, pending, markdown, separator } = props
+  const { project, doc, pending, preview, markdown, separator } = props
   const [pdfOpen, setPdfOpen] = useState(() => window.innerWidth >= 1500)
+  const [pdfWidth, setPdfWidth] = useState(640)
   const [navOpen, setNavOpen] = useState(true)
   const [page, setPage] = useState<number | null>(null)
-  const pickRef = useRef<HTMLInputElement>(null)
-  const ready = doc !== null && pending === null
-  const title = pending?.file.name ?? doc?.file.name
+  // 预览其他文件时，复制、下载、保存都不针对当前结果，先禁用
+  const ready = doc !== null && pending === null && preview === null
+  const title = pending ? (pending.path ?? pending.file.name) : (preview?.path ?? doc?.path ?? doc?.file.name)
+
+  // 拖动 PDF 面板左边缘调整宽度；pointer capture 保证鼠标经过 iframe 时仍能收到事件
+  const resizePdf = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.buttons !== 1) return
+    const max = window.innerWidth - (navOpen ? SIDEBAR_WIDTH : 0) - MAIN_MIN_WIDTH
+    setPdfWidth(Math.round(Math.min(max, Math.max(PDF_MIN_WIDTH, window.innerWidth - e.clientX))))
+  }
 
   return (
-    <div className="grid h-svh grid-rows-[auto_1fr]">
-      <header className="flex items-center gap-3 border-border/60 border-b px-5 py-3">
-        <Hint label={navOpen ? "收起文件列表" : "展开文件列表"}>
-          <Button aria-label={navOpen ? "收起文件列表" : "展开文件列表"} onClick={() => setNavOpen((v) => !v)} size="icon" variant="ghost">
+    // 整页不滚动：只有侧栏、结果区各自滚动，页头始终固定在顶部
+    <div className="relative grid h-svh grid-rows-[auto_1fr] overflow-hidden">
+      <header className="flex items-center gap-2 border-border/60 border-b px-4 py-2.5">
+        <Hint label={navOpen ? "收起侧栏" : "展开侧栏"}>
+          <Button aria-label={navOpen ? "收起侧栏" : "展开侧栏"} onClick={() => setNavOpen((v) => !v)} size="icon" variant="ghost">
             {navOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
           </Button>
         </Hint>
-        <Hint label="切换项目">
-          <Button className="max-w-56 gap-2 px-2" onClick={props.onLeave} variant="ghost">
-            <FolderOpen />
-            <span className="truncate">{project.name}</span>
-            {!project.writable && <HaloBadge variant="outline">只读</HaloBadge>}
-            <ChevronsUpDown className="text-muted-foreground" />
-          </Button>
-        </Hint>
+        <ProjectSwitcher onSwitch={props.onSwitchProject} project={project} />
         <span className="text-muted-foreground/60">/</span>
-        <Hint label="打开目录外的 PDF（也可直接拖入页面）">
-          <Button aria-label="新文件" disabled={!!pending} onClick={() => pickRef.current?.click()} size="icon" variant="ghost">
-            <FilePlus2 />
-          </Button>
-        </Hint>
-        <input
-          accept="application/pdf,.pdf"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            e.target.value = ""
-            if (f) props.onFile(f)
-          }}
-          ref={pickRef}
-          type="file"
-        />
         <h1 className="min-w-0 truncate font-medium" title={title}>
           {title ?? <span className="text-muted-foreground">未选择文件</span>}
         </h1>
-        {ready && <DocBadges result={doc.result} chunks={splitChunks(markdown, separator).length} />}
         <div className="ml-auto flex items-center gap-1">
           {ready && (
             <Hint label={pdfOpen ? "收起原文" : "对照原文 PDF"}>
@@ -109,104 +111,74 @@ export function Workspace(props: WorkspaceProps) {
               </Button>
             </Hint>
           )}
-          {ready ? (
-            <Hint label="复制全部 Markdown">
-              <CopyButton aria-label="复制全部 Markdown" value={markdown} />
-            </Hint>
-          ) : (
-            <CopyButton disabled value="" />
-          )}
-          {project.writable && (
-            <Hint label="下载 .md">
-              <Button aria-label="下载 .md" disabled={!ready} onClick={props.onDownload} size="icon" variant="ghost">
-                <Download />
-              </Button>
-            </Hint>
-          )}
-          {project.writable ? (
-            <Hint
-              label={
-                <>
-                  保存为 PDF 旁的同名 .md <Keys>Ctrl S</Keys>
-                </>
-              }
-            >
-              <Button className="ml-1" disabled={!ready} onClick={props.onSave} size="lg">
-                <Save />
-                保存到目录
-              </Button>
-            </Hint>
-          ) : ready ? (
-            <Hint label="下载可直接导入 FastGPT 的 Markdown">
-              <Button className="ml-1" onClick={props.onDownload} size="lg">
-                <Download />
-                下载 .md
-              </Button>
-            </Hint>
-          ) : (
-            <Button className="ml-1" disabled size="lg">
-              <Download />
-              下载 .md
-            </Button>
-          )}
         </div>
       </header>
 
-      <div
-        className={
-          navOpen
-            ? "grid min-h-0 grid-cols-[240px_280px_minmax(0,1fr)_auto]"
-            : "grid min-h-0 grid-cols-[280px_minmax(0,1fr)_auto]"
-        }
-      >
+      <div className={navOpen ? "grid min-h-0 grid-cols-[300px_minmax(0,1fr)_auto]" : "grid min-h-0 grid-cols-[minmax(0,1fr)_auto]"}>
         {navOpen && (
-          <ProjectNav
-            active={props.activePath}
-            locked={!!pending}
-            onRefresh={props.onRefresh}
-            onSelect={props.onSelectPath}
-            project={project}
-          />
+          <aside className="flex min-h-0 flex-col border-border/60 border-r">
+            <ProjectNav
+              active={props.activePath}
+              locked={!!pending || props.busy || props.saveState === "loading"}
+              onAddPdf={props.onAddPdf}
+              onRefresh={props.onRefresh}
+              onSelect={props.onSelectPath}
+              project={project}
+            />
+            <ArtifactNav
+              artifacts={props.artifacts}
+              currentPath={ready ? doc.mdPath : null}
+              locked={!!pending || props.busy || props.saveState === "loading"}
+              onSelect={props.onSelectArtifact}
+              project={project}
+            />
+          </aside>
         )}
-        <SettingsRail
-          busy={props.busy || !!pending}
-          convert={props.convert}
-          onApply={props.onApply}
-          onChange={props.onDraft}
-          onConvert={props.onConvert}
-          onReconvert={props.onReconvert}
-          pendingOverwrite={ready && props.pendingOverwrite}
-          reconvertable={ready && props.reconvertable}
-          value={props.draft}
-        />
 
         <main className="min-h-0 min-w-0">
           {pending ? (
             <ConvertingStage {...pending} />
+          ) : preview ? (
+            <PreviewStage onClose={props.onClosePreview} onParse={props.onParsePreview} title={preview.path} url={preview.url} />
           ) : doc ? (
             <ResultView
+              actions={
+                <ResultActions
+                  busy={props.busy}
+                  markdown={markdown}
+                  onDownload={props.onDownload}
+                  onReparse={props.onReparse}
+                  onSave={props.onSave}
+                  saveState={props.saveState}
+                  writable={project.writable}
+                />
+              }
+              busy={props.busy}
+              key={doc.mdPath}
               draft={props.draft}
               markdown={markdown}
               onMarkdown={props.onMarkdown}
               onPage={(p) => (setPage(p), setPdfOpen(true))}
+              result={doc.result}
               separator={separator}
             />
           ) : (
             <EmptyStage
-              label={project.files.length ? "从左侧选择 PDF，或拖入目录外的 PDF" : "拖入 PDF 或点击选择"}
               onFile={props.onFile}
+              title={project.files.length ? "从左侧选择 PDF，或拖入目录外的 PDF" : "拖入 PDF 或点击选择"}
             />
           )}
         </main>
 
         {ready && pdfOpen && (
-          <section className="w-[min(46vw,760px)] border-border/60 border-l bg-muted/30">
-            <iframe
-              className="size-full"
-              key={`${doc.jobId}:${page ?? 0}`}
-              src={pdfUrl(doc.jobId, page)}
-              title={doc.file.name}
+          <section className="relative border-border/60 border-l bg-muted/30" style={{ width: pdfWidth }}>
+            <div
+              aria-hidden
+              className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize transition-colors hover:bg-foreground/10 active:bg-foreground/15"
+              onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
+              onPointerMove={resizePdf}
             />
+            <SourcePdf doc={doc} page={page} />
           </section>
         )}
       </div>
@@ -214,19 +186,50 @@ export function Workspace(props: WorkspaceProps) {
   )
 }
 
-function DocBadges({ result, chunks }: { result: ConvertResult; chunks: number }) {
-  const d = result.doc_stats
+/** 服务端结果与本地 Markdown 共用原文面板；卸载或换文件时释放本地 URL。 */
+function SourcePdf({ doc: { file, jobId }, page }: { doc: Doc; page: number | null }) {
+  const frame = useRef<HTMLIFrameElement>(null)
+  useEffect(() => {
+    const url = jobId ? pdfUrl(jobId) : URL.createObjectURL(file)
+    if (frame.current) frame.current.src = `${url}${page ? `#page=${page}` : ""}`
+    return () => {
+      if (!jobId) URL.revokeObjectURL(url)
+    }
+  }, [file, jobId, page])
+  return <iframe className="size-full" key={`${jobId ?? file.name}:${page ?? 0}`} ref={frame} title={file.name} />
+}
+
+/** 结果工具栏右侧的文档统计。 */
+function DocStats({ result, chunks }: { result: ConvertResult | null; chunks: number }) {
+  const d = result?.doc_stats
   return (
-    <div className="hidden items-center gap-2 lg:flex">
-      <HaloBadge tabularNums variant="secondary">{d.pages} 页</HaloBadge>
-      <HaloBadge tabularNums variant="secondary">{chunks} 块</HaloBadge>
-      {d.tables > 0 && <HaloBadge tabularNums variant="secondary">{d.tables} 表格</HaloBadge>}
-      {d.ocr_pages > 0 && <HaloBadge tabularNums variant="outline">OCR {d.ocr_pages} 页</HaloBadge>}
+    <div className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground tabular-nums">
+      {d && <><span>{d.pages} 页</span><span>·</span></>}
+      <span className="inline-flex items-center gap-0.5">
+        <NumberTicker value={chunks} /> 块
+      </span>
+      {d && d.tables > 0 && (
+        <>
+          <span>·</span>
+          <span>{d.tables} 表格</span>
+        </>
+      )}
+      {d && d.ocr_pages > 0 && (
+        <>
+          <span>·</span>
+          <span>OCR {d.ocr_pages} 页</span>
+        </>
+      )}
     </div>
   )
 }
 
+type Tab = "chunks" | "markdown" | "preview"
+
 interface ResultViewProps {
+  actions: ReactNode
+  busy: boolean
+  result: ConvertResult | null
   markdown: string
   separator: string
   draft: ChunkOptions
@@ -234,58 +237,89 @@ interface ResultViewProps {
   onPage: (page: number) => void
 }
 
-function ResultView({ markdown, separator, draft, onMarkdown, onPage }: ResultViewProps) {
-  const [tab, setTab] = useState("chunks")
+function ResultView({ actions, busy, result, markdown, separator, draft, onMarkdown, onPage }: ResultViewProps) {
+  const [tab, setTab] = useState<Tab>("chunks")
   const [filter, setFilter] = useState<ChunkFilter>("all")
+  // 最近一次删除块：markdown 仍是删除后的内容时才可撤销
+  const [undo, setUndo] = useState<{ before: string; after: string } | null>(null)
   const chunks = useMemo(() => splitChunks(markdown, separator), [markdown, separator])
 
+  const changeChunks = (next: string[], removed = false) => {
+    const md = joinChunks(next, separator)
+    setUndo(removed ? { before: markdown, after: md } : null)
+    onMarkdown(md)
+  }
+
   return (
-    <HaloTabs className="h-full min-h-0 grid-rows-[auto_1fr] gap-0" onValueChange={(v) => setTab(String(v))} value={tab}>
+    <div className="relative grid h-full min-h-0 grid-rows-[auto_1fr]">
       <div className="px-6 pt-4">
-        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4">
-          <HaloTabsList variant="pill">
-            <HaloTabsTrigger value="chunks">分块</HaloTabsTrigger>
-            <HaloTabsTrigger value="markdown">Markdown</HaloTabsTrigger>
-            <HaloTabsTrigger value="preview">预览</HaloTabsTrigger>
-            <HaloTabsIndicator variant="pill" />
-          </HaloTabsList>
-          {tab === "chunks" && (
-            <ChunkFilterBar
-              chunks={chunks}
-              maxChars={draft.max_chars}
-              minChars={draft.min_chars}
-              onChange={setFilter}
-              value={filter}
-            />
-          )}
+        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-x-4 gap-y-2">
+          <ModelSelector
+            ariaLabel="结果视图"
+            className="[&_button]:text-sm"
+            models={[
+              { id: "chunks", name: "分块" },
+              { id: "markdown", name: "Markdown" },
+              { id: "preview", name: "预览" },
+            ]}
+            onChange={(v) => setTab(v as Tab)}
+            value={tab}
+            variant="Segmented"
+          />
+          <div className="ml-auto flex min-w-0 flex-1 justify-end">{actions}</div>
+          <div className="flex min-h-8 w-full flex-wrap items-center gap-2">
+            {tab === "chunks" && (
+              <ChunkFilterBar
+                chunks={chunks}
+                maxChars={draft.max_chars}
+                minChars={draft.min_chars}
+                onChange={setFilter}
+                value={filter}
+              />
+            )}
+            <div className="ml-auto"><DocStats chunks={chunks.length} result={result} /></div>
+          </div>
         </div>
       </div>
-      <HaloTabsContent className="min-h-0 overflow-y-auto px-6 py-5" value="chunks">
-        <div className="mx-auto max-w-3xl">
-          <ChunkList
-            chunks={chunks}
-            filter={filter}
-            maxChars={draft.max_chars}
-            minChars={draft.min_chars}
-            onChange={(next) => onMarkdown(joinChunks(next, separator))}
-            onPage={onPage}
+
+      <div aria-busy={busy} className="min-h-0 overflow-y-auto px-6 py-5" inert={busy}>
+        {tab === "chunks" && (
+          <div className="mx-auto max-w-3xl">
+            <ChunkList
+              chunks={chunks}
+              filter={filter}
+              maxChars={draft.max_chars}
+              minChars={draft.min_chars}
+              onChange={changeChunks}
+              onPage={onPage}
+            />
+          </div>
+        )}
+        {tab === "markdown" && (
+          <AutosizeTextarea
+            className="mx-auto max-w-3xl rounded-xl font-mono text-[13px] leading-relaxed"
+            minHeight={480}
+            onChange={(e) => onMarkdown(e.target.value)}
+            spellCheck={false}
+            value={markdown}
           />
-        </div>
-      </HaloTabsContent>
-      <HaloTabsContent className="min-h-0 px-6 py-5" value="markdown">
-        <HaloTextarea
-          className="h-full min-h-[60vh] font-mono text-[13px] leading-relaxed"
-          innerClassName="h-full"
-          onChange={(e) => onMarkdown(e.target.value)}
-          shellClassName="mx-auto h-full max-w-3xl"
-          spellCheck={false}
-          value={markdown}
+        )}
+        {tab === "preview" && <Preview markdown={markdown} separator={separator} />}
+      </div>
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-6 z-40 flex justify-center">
+        <UndoPill
+          label="已删除 1 个块"
+          onExpire={() => setUndo(null)}
+          onUndo={() => {
+            if (undo) onMarkdown(undo.before)
+            setUndo(null)
+          }}
+          open={undo !== null && undo.after === markdown}
+          undoLabel="撤销"
         />
-      </HaloTabsContent>
-      <HaloTabsContent className="min-h-0 overflow-y-auto px-6 py-5" value="preview">
-        <Preview markdown={markdown} separator={separator} />
-      </HaloTabsContent>
-    </HaloTabs>
+      </div>
+    </div>
   )
 }
 

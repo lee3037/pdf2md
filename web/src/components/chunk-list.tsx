@@ -4,8 +4,8 @@ import { Check, Combine, Pencil, Trash2, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { describeChunk, renderMarkdown, stripContext } from "@/lib/chunks"
 import { Button } from "@/components/ui/button"
-import { HaloSegmented } from "@/components/ui/halo-segmented"
-import { HaloTextarea } from "@/components/ui/halo-input"
+import { AutosizeTextarea } from "@/components/spectrumui/autosize-textarea"
+import { ModelSelector } from "@/components/spectrumui/blocks/ai-assistants/model-selector"
 import { Hint, Keys } from "@/components/hint"
 
 interface ChunkListProps {
@@ -13,7 +13,8 @@ interface ChunkListProps {
   maxChars: number
   minChars: number
   filter: ChunkFilter
-  onChange: (chunks: string[]) => void
+  /** removed：这次改动是删除了一个块（可撤销） */
+  onChange: (chunks: string[], removed?: boolean) => void
   onPage: (page: number) => void
 }
 
@@ -31,14 +32,16 @@ export function ChunkFilterBar({ chunks, maxChars, minChars, value, onChange }: 
   const short = chunks.filter((c) => c.length < minChars).length
   if (!over && !short) return null
   return (
-    <HaloSegmented
-      items={[
-        { value: "all", label: `全部 ${chunks.length}` },
-        ...(over ? [{ value: "over", label: `超长 ${over}` }] : []),
-        ...(short ? [{ value: "short", label: `偏短 ${short}` }] : []),
+    <ModelSelector
+      ariaLabel="筛选分块"
+      models={[
+        { id: "all", name: `全部 ${chunks.length}` },
+        ...(over ? [{ id: "over", name: `超长 ${over}` }] : []),
+        ...(short ? [{ id: "short", name: `偏短 ${short}` }] : []),
       ]}
-      onValueChange={(v) => onChange(v as ChunkFilter)}
+      onChange={(v) => onChange(v as ChunkFilter)}
       value={value}
+      variant="Segmented"
     />
   )
 }
@@ -55,6 +58,8 @@ export function ChunkList({ chunks, maxChars, minChars, filter, onChange, onPage
       next.splice(i, 2, `${next[i]}\n\n${stripContext(next[i + 1])}`)
     } else if (text === null) {
       next.splice(i, 1)
+      onChange(next, true)
+      return
     } else {
       next[i] = text
     }
@@ -163,9 +168,10 @@ const ChunkCard = memo(function ChunkCard({ index, view, state, isLast, onSave, 
         <div className="md px-5 py-4" dangerouslySetInnerHTML={{ __html: html }} onDoubleClick={() => setDraft(view.text)} />
       ) : (
         <div className="p-3">
-          <HaloTextarea
+          <AutosizeTextarea
             autoFocus
-            className="min-h-64 font-mono text-[13px] leading-relaxed"
+            className="rounded-xl font-mono text-[13px] leading-relaxed"
+            minHeight={160}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") setDraft(null)
