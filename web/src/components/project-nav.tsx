@@ -4,6 +4,7 @@ import { FilePlus2, RefreshCw } from "lucide-react"
 import type { Project } from "@/lib/project"
 import { Button } from "@/components/ui/button"
 import { Hint } from "@/components/hint"
+import { PdfIcon } from "@/components/file-type-icon"
 import { TreeNav } from "@/components/spectrumui/tree-nav"
 
 interface ProjectNavProps {
@@ -25,6 +26,7 @@ export function ProjectNav({ project, active, locked, onSelect, onRefresh, onAdd
       project.files.map((f) => ({
         label: f.path,
         href: `#${encodeURIComponent(f.path)}`,
+        icon: <PdfIcon />,
         badge: f.converted ? "已转换" : undefined,
       })),
     [project.files]
