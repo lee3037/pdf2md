@@ -13,6 +13,7 @@ import type { MorphButtonState } from "@/components/spectrumui/morph-button"
 import { UndoPill } from "@/components/spectrumui/undo-pill"
 import { ChunkFilterBar, ChunkList, type ChunkFilter } from "@/components/chunk-list"
 import { Hint } from "@/components/hint"
+import { Logo } from "@/components/logo"
 import { ProjectNav } from "@/components/project-nav"
 import { ProjectSwitcher } from "@/components/project-switcher"
 import { ArtifactNav, type ArtifactNavItem } from "@/components/artifact-nav"
@@ -88,6 +89,7 @@ export function Workspace(props: WorkspaceProps) {
     // 整页不滚动：只有侧栏、结果区各自滚动，页头始终固定在顶部
     <div className="relative grid h-svh grid-rows-[auto_1fr] overflow-hidden">
       <header className="flex items-center gap-2 border-border/60 border-b px-4 py-2.5">
+        <Logo className="mr-1" />
         <Hint label={navOpen ? "收起侧栏" : "展开侧栏"}>
           <Button aria-label={navOpen ? "收起侧栏" : "展开侧栏"} onClick={() => setNavOpen((v) => !v)} size="icon" variant="ghost">
             {navOpen ? <PanelLeftClose /> : <PanelLeftOpen />}

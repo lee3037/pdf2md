@@ -7,7 +7,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
-OUT = Path(sys.argv[2] if len(sys.argv) > 2 else "/tmp/pdf2md-ui")
+OUT = Path(sys.argv[2] if len(sys.argv) > 2 else "/tmp/stratum-ui")
 OUT.mkdir(parents=True, exist_ok=True)
 SAMPLE = Path(__file__).resolve().parents[1] / "samples" / "complex_cn.pdf"
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 启动 PDF → FastGPT Markdown 服务。用法：./run.sh [端口]，默认 8000
+# 启动 Stratum 层析服务。用法：./run.sh [端口]，默认 8000
 set -euo pipefail
 cd "$(dirname "$0")"
 PORT="${1:-${PORT:-8000}}"

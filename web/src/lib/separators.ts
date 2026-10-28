@@ -1,6 +1,6 @@
 import { DEFAULT_CHUNK } from "@/lib/api"
 
-const KEY = "pdf2md.separators"
+const KEY = "stratum.separators"
 
 /** 分隔符下拉框的候选项：默认分隔符在前，后面是用户输入过的。 */
 export function loadSeparators(): string[] {

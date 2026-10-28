@@ -45,7 +45,7 @@ def _ocr_wrapper(page, **kwargs):
 def worker_init():
     """进程初始化：限制单进程线程数，预加载版面模型与 OCR 模型。"""
     global _OCR_FUNC
-    threads = os.environ.get("PDF2MD_OCR_THREADS")
+    threads = os.environ.get("STRATUM_OCR_THREADS")
     if threads:
         os.environ.setdefault("OMP_NUM_THREADS", threads)
     with contextlib.redirect_stdout(io.StringIO()):

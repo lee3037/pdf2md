@@ -37,8 +37,8 @@ const isPdf = (f: File) => /\.pdf$/i.test(f.name) || f.type === "application/pdf
 
 export default function App() {
   const [project, setProject] = useState<Project | null>(null)
-  const [convertOpts, setConvertOpts] = useStored("pdf2md.convert", DEFAULT_CONVERT)
-  const [draft, setDraft] = useStored("pdf2md.chunk", DEFAULT_CHUNK)
+  const [convertOpts, setConvertOpts] = useStored("stratum.convert", DEFAULT_CONVERT)
+  const [draft, setDraft] = useStored("stratum.chunk", DEFAULT_CHUNK)
   const [pending, setPending] = useState<Pending | null>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [activeArtifact, setActiveArtifact] = useState<string | null>(null)

@@ -8,7 +8,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-os.environ.setdefault("PDF2MD_WORKERS", "1")
+os.environ.setdefault("STRATUM_WORKERS", "1")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
