@@ -170,6 +170,16 @@ with sync_playwright() as p:
     page.click("article >> nth=1 >> header button >> nth=0")
     checks["页码跳转"] = "#page=" in (page.get_attribute("iframe", "src") or "")
 
+    # OXR 不使用本地 OCR 参数，只保留去页眉页脚。
+    drawer = open_reparse(page)
+    drawer.get_by_role("radio", name="OXR").click()
+    checks["OXR 隐藏本地 OCR 参数"] = (
+        drawer.get_by_role("radiogroup", name="OCR", exact=True).count() == 0
+        and drawer.get_by_text("去页眉页脚", exact=True).count() == 1
+    )
+    drawer.get_by_role("button", name="取消", exact=True).click()
+    drawer.wait_for(state="detached")
+
     # 修改识别参数会重新解析 PDF，旧版本仍保留。
     drawer = open_reparse(page)
     drawer.get_by_role("radio", name="全部", exact=True).click()

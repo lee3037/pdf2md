@@ -3,6 +3,8 @@ export type ContextMode = "breadcrumb" | "headings" | "none"
 export type TableMode = "markdown" | "kv"
 
 export interface ConvertOptions {
+  /** 解析方案 id，取值见 GET /api/parsers */
+  parser: string
   ocr_mode: OcrMode
   ocr_dpi: number
   remove_header_footer: boolean
@@ -16,6 +18,13 @@ export interface ChunkOptions {
   include_pages: boolean
   table_mode: TableMode
   table_max_rows: number
+}
+
+export interface ParserInfo {
+  id: string
+  name: string
+  /** 是否使用本地 OCR 的模式和分辨率参数 */
+  local_ocr_options: boolean
 }
 
 export interface DocStats {
@@ -47,7 +56,15 @@ export interface Job {
   result?: ConvertResult
 }
 
-export const DEFAULT_CONVERT: ConvertOptions = { ocr_mode: "auto", ocr_dpi: 200, remove_header_footer: true }
+/** 默认的本地方案；方案目录加载完成前也可直接使用 */
+export const DEFAULT_PARSER: ParserInfo = { id: "pymupdf", name: "PyMuPDF + RapidOCR", local_ocr_options: true }
+
+export const DEFAULT_CONVERT: ConvertOptions = {
+  parser: DEFAULT_PARSER.id,
+  ocr_mode: "auto",
+  ocr_dpi: 200,
+  remove_header_footer: true,
+}
 
 export const DEFAULT_CHUNK: ChunkOptions = {
   separator: "===CHUNK===",
@@ -65,6 +82,10 @@ async function json<T>(resp: Response): Promise<T> {
     throw new Error((data as { detail?: string }).detail || resp.statusText)
   }
   return data as T
+}
+
+export async function getParsers() {
+  return (await json<{ parsers: ParserInfo[] }>(await fetch("api/parsers"))).parsers
 }
 
 export async function createJob(file: File, options: ConvertOptions & ChunkOptions) {

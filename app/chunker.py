@@ -214,7 +214,18 @@ def _section_units(sec, budget, opts) -> list[Unit]:
             units.extend(_table_units(e, "", budget, opts, budget - _glued_size(units)))
         elif t == "code":
             for piece in hard_split(e["text"], max(budget - 10, 50)) if len(e["text"]) > budget else [e["text"]]:
-                units.append(Unit(f"```\n{piece}\n```", e["pages"], kind="code"))
+                # 正文含反引号时用更长围栏，避免把代码内容误作结束标记。
+                longest = max((len(m.group()) for m in re.finditer(r"`+", piece)), default=0)
+                fence = "`" * max(3, longest + 1)
+                units.append(Unit(f"{fence}{e.get('language', '')}\n{piece}\n{fence}", e["pages"], kind="code"))
+        elif t == "formula":
+            text = e["text"].strip()
+            for opening, closing in (("$$", "$$"), (r"\[", r"\]")):
+                if text.startswith(opening) and text.endswith(closing):
+                    text = text[len(opening):-len(closing)].strip()
+                    break
+            # 公式作为整体分块；超长公式由现有超限警告说明，不切断 LaTeX。
+            units.append(Unit(f"$$\n{text}\n$$", e["pages"], kind="formula"))
         i += 1
     return units
 

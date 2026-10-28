@@ -5,6 +5,7 @@ import useMeasure from "react-use-measure"
 import { Drawer } from "vaul"
 
 import type { ChunkOptions, ConvertOptions } from "@/lib/api"
+import type { ParserCatalog } from "@/lib/use-parsers"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { SettingsPanel } from "@/components/settings-panel"
@@ -24,6 +25,7 @@ interface FileDrawerProps {
   initialView: FileDrawerView
   /** 当前设置；进入配置页时复制一份，确认后才生效 */
   settings: ParseSettings
+  catalog: ParserCatalog
   onParse: (settings: ParseSettings) => void
   onPreview: () => void
   onClose: () => void
@@ -73,9 +75,19 @@ function Header({ title, onClose }: { title: string; onClose: () => void }) {
  * 点选 PDF 后弹出的底部抽屉：先选操作，再确认本次解析配置。
  * 改写自 Spectrum UI 的 Animated Drawer：切换内容时高度跟随实际内容平滑变化。
  */
-export function FileDrawer({ path, open, initialView, settings, onParse, onPreview, onClose, reparse = false }: FileDrawerProps) {
+export function FileDrawer({ path, open, initialView, settings, catalog, onParse, onPreview, onClose, reparse = false }: FileDrawerProps) {
   const [view, setView] = useState(initialView)
   const [draft, setDraft] = useState(settings)
+  const { chunk, convert } = draft
+  const parser = catalog.parsers.find((p) => p.id === convert.parser)
+  const valid = !!parser && !!chunk.separator.trim() &&
+    Number.isInteger(chunk.min_chars) && chunk.min_chars >= 0 && chunk.min_chars <= chunk.max_chars &&
+    Number.isInteger(chunk.max_chars) && chunk.max_chars >= 100 && chunk.max_chars <= 10000 &&
+    Number.isInteger(chunk.table_max_rows) && chunk.table_max_rows >= 0 && chunk.table_max_rows <= 500 &&
+    (!parser.local_ocr_options || (
+      ["auto", "force", "off"].includes(convert.ocr_mode) &&
+      Number.isInteger(convert.ocr_dpi) && convert.ocr_dpi >= 100 && convert.ocr_dpi <= 300
+    ))
   const [contentRef, bounds] = useMeasure()
   const name = path.split("/").pop() ?? path
 
@@ -88,9 +100,16 @@ export function FileDrawer({ path, open, initialView, settings, onParse, onPrevi
           aria-describedby={undefined}
           asChild
           className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-[400px] overflow-hidden rounded-[36px] bg-white outline-hidden dark:bg-neutral-900"
+          onEscapeKeyDown={(event) => {
+            // Base UI 的候选列表先处理 Escape，避免同一次按键也关闭 Vaul 抽屉。
+            if (event.target instanceof HTMLElement &&
+              event.target.closest('[role="dialog"]')?.querySelector('[role="combobox"][aria-expanded="true"]')) {
+              event.preventDefault()
+            }
+          }}
         >
           <motion.div animate={{ height: bounds.height || "auto" }}>
-            <div className="p-6" ref={contentRef}>
+            <div className={view === "config" ? "p-4" : "p-6"} ref={contentRef}>
               {view === "menu" ? (
                 <>
                   <Header onClose={onClose} title={name} />
@@ -108,26 +127,28 @@ export function FileDrawer({ path, open, initialView, settings, onParse, onPrevi
                 </>
               ) : (
                 <>
-                  <Header onClose={onClose} title="解析配置" />
-                  <div className="-mx-6 mt-2 max-h-[min(60svh,560px)] overflow-y-auto">
+                  <div className="px-1 pt-1 pb-4">
+                    <Header onClose={onClose} title="解析配置" />
+                  </div>
+                  <div className="max-h-[min(60svh,530px,calc(100svh-172px))] overflow-y-auto overscroll-contain px-[3px] py-1 [scrollbar-width:thin]">
                     <SettingsPanel
-                      className="px-6"
+                      catalog={catalog}
                       convert={draft.convert}
                       onChange={(chunk) => setDraft((d) => ({ ...d, chunk }))}
                       onConvert={(convert) => setDraft((d) => ({ ...d, convert }))}
                       value={draft.chunk}
                     />
                   </div>
-                  <div className="mt-4 flex items-center gap-3">
+                  <div className="mt-4 flex items-center gap-2.5 px-[3px]">
                     <Button
-                      className="h-11 flex-1 rounded-3xl bg-neutral-200 text-neutral-900 hover:bg-neutral-300 dark:bg-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-600"
+                      className="h-10 w-[35%] rounded-3xl bg-neutral-100 text-neutral-900 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700"
                       onClick={() => (initialView === "config" ? onClose() : setView("menu"))}
                     >
                       {initialView === "config" ? "取消" : "返回"}
                     </Button>
                     <Button
-                      className="h-11 flex-1 rounded-3xl bg-sky-400 text-white hover:bg-sky-500"
-                      disabled={!draft.chunk.separator.trim() || draft.chunk.max_chars < 100 || draft.chunk.min_chars > draft.chunk.max_chars}
+                      className="h-10 min-w-0 flex-1 rounded-3xl bg-sky-500 text-white hover:bg-sky-600"
+                      disabled={!valid}
                       onClick={() => onParse(draft)}
                     >
                       <Layers />

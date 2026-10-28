@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Upload } from "lucide-react"
 
-import type { ChunkOptions, ConvertOptions } from "@/lib/api"
+import type { ChunkOptions, ConvertOptions, ParserInfo } from "@/lib/api"
 import { createJob, DEFAULT_CHUNK, DEFAULT_CONVERT, getJob, rechunk } from "@/lib/api"
 import type { MarkdownFile, Project } from "@/lib/project"
 import { addPdfToProject, nextMarkdownFile, readMarkdown, readPdf, rescan, writeMarkdown } from "@/lib/project"
 import { loadSeparators } from "@/lib/separators"
+import { useParsers } from "@/lib/use-parsers"
 import { useStored } from "@/lib/use-stored"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import type { MorphButtonState } from "@/components/spectrumui/morph-button"
@@ -17,9 +18,11 @@ import { Workspace, type Doc, type Preview } from "@/components/workspace"
 
 const sameExceptSeparator = (a: ChunkOptions, b: ChunkOptions) =>
   (Object.keys(a) as (keyof ChunkOptions)[]).every((k) => k === "separator" || a[k] === b[k])
-const sameConvert = (a: ConvertOptions, b: ConvertOptions) =>
-  a.ocr_mode === b.ocr_mode && a.remove_header_footer === b.remove_header_footer &&
-  (a.ocr_mode === "off" || a.ocr_dpi === b.ocr_dpi)
+// 方案不用本地 OCR 参数时忽略它们；目录里查不到方案时按全部参数比较
+const sameConvert = (a: ConvertOptions, b: ConvertOptions, parser?: ParserInfo) =>
+  a.parser === b.parser && a.remove_header_footer === b.remove_header_footer &&
+  (parser?.local_ocr_options === false ||
+    (a.ocr_mode === b.ocr_mode && (a.ocr_mode === "off" || a.ocr_dpi === b.ocr_dpi)))
 
 const fail = (title: string, e: unknown) =>
   toast({ title, description: e instanceof Error ? e.message : String(e), status: "error" })
@@ -39,6 +42,7 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(null)
   const [convertOpts, setConvertOpts] = useStored("stratum.convert", DEFAULT_CONVERT)
   const [draft, setDraft] = useStored("stratum.chunk", DEFAULT_CHUNK)
+  const catalog = useParsers()
   const [pending, setPending] = useState<Pending | null>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [activeArtifact, setActiveArtifact] = useState<string | null>(null)
@@ -102,6 +106,11 @@ export default function App() {
             const job = await getJob(id)
             if (run !== runRef.current) return
             if (job.status === "done" && job.result) {
+              // 后端可以瞬间完成；让进度组件补完各阶段和逐页计数，再切换到结果。
+              await new Promise<void>((resolve) => {
+                setPending({ file, path, done: page_count, total: page_count, onComplete: resolve })
+              })
+              if (run !== runRef.current) return
               await publishResult({ jobId: id, file, path, result: job.result }, job.result.markdown, settings)
               setPending(null)
               job.result.warnings.forEach((w) => toast({ title: w, status: "info", duration: 8000 }))
@@ -278,7 +287,8 @@ export default function App() {
   // 确认配置后生成新版本；仅改分隔符时沿用当前版本的手动编辑。
   const reparse = async (settings: ParseSettings) => {
     if (!current || !doc || pending || busy) return
-    const reuseParsed = !!doc.jobId && !!usedConvert && sameConvert(settings.convert, usedConvert)
+    const parser = catalog.parsers.find((p) => p.id === settings.convert.parser)
+    const reuseParsed = !!doc.jobId && !!usedConvert && sameConvert(settings.convert, usedConvert, parser)
     const separatorOnly = reuseParsed && sameExceptSeparator(settings.chunk, applied) && settings.chunk.separator !== applied.separator
     closeDrawer()
     setConvertOpts(settings.convert)
@@ -444,6 +454,7 @@ export default function App() {
       )}
       {project && drawer && (
         <FileDrawer
+          catalog={catalog}
           initialView={drawer.view}
           key={drawer.seq}
           onClose={closeDrawer}

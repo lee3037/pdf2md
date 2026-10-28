@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { Radio } from '@base-ui/react/radio';
+import { RadioGroup } from '@base-ui/react/radio-group';
 import { cn } from '@/lib/utils';
 import { Hint } from '@/components/hint';
 import type { ModelOption } from './types';
@@ -85,47 +87,44 @@ export function ModelSelector({
   }
 
   return (
-    <div role="radiogroup" aria-label={ariaLabel} className={cn('w-full max-w-[380px] space-y-1.5', className)}>
+    <RadioGroup value={value} onValueChange={select} aria-label={ariaLabel} className={cn('w-full max-w-[380px] space-y-1.5', className)}>
       {models.map((model) => {
         const active = model.id === value;
         return (
-          <button
+          <Radio.Root
             key={model.id}
-            type="button"
-            role="radio"
-            aria-checked={active}
+            value={model.id}
             disabled={model.disabled}
-            onClick={() => select(model.id)}
             className={cn(
-              'flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left',
+              'flex w-full cursor-pointer items-center gap-2.5 rounded-[11px] border px-3 py-2.5 text-left',
               'transition-[border-color,background-color,transform] duration-150',
               'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-neutral-400',
               model.disabled
                 ? 'cursor-not-allowed border-black/[0.05] opacity-45 dark:border-white/[0.06]'
                 : active
-                  ? 'border-black/[0.2] bg-black/[0.02] dark:border-white/[0.28] dark:bg-white/[0.04]'
+                  ? 'border-sky-400 bg-sky-50/70 dark:border-sky-600 dark:bg-sky-950/40'
                   : 'border-black/[0.07] hover:border-black/[0.14] active:scale-[0.99] dark:border-white/[0.08] dark:hover:border-white/[0.16]',
             )}
           >
             <span
               aria-hidden
               className={cn(
-                'grid size-4 shrink-0 place-items-center rounded-full border transition-colors duration-150',
+                'grid size-3.5 shrink-0 place-items-center rounded-full border transition-colors duration-150',
                 active
-                  ? 'border-neutral-900 dark:border-neutral-100'
+                  ? 'border-sky-500 dark:border-sky-400'
                   : 'border-neutral-300 dark:border-neutral-600',
               )}
             >
               <span
                 className={cn(
-                  'size-2 rounded-full bg-neutral-900 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] dark:bg-neutral-100',
+                  'size-1.5 rounded-full bg-sky-500 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] dark:bg-sky-400',
                   active ? 'scale-100' : 'scale-0',
                 )}
               />
             </span>
 
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
+              <span className="block truncate text-xs font-medium text-neutral-900 dark:text-neutral-100">
                 {model.name}
               </span>
               {model.description && (
@@ -136,14 +135,14 @@ export function ModelSelector({
             </span>
 
             {model.badge && (
-              <span className="shrink-0 rounded-md bg-black/[0.05] px-1.5 py-0.5 font-mono text-[9.5px] font-medium uppercase tracking-wide text-neutral-500 dark:bg-white/[0.08] dark:text-neutral-400">
+              <span className="shrink-0 text-[10px] text-muted-foreground">
                 {model.badge}
               </span>
             )}
-          </button>
+          </Radio.Root>
         );
       })}
-    </div>
+    </RadioGroup>
   );
 }
 

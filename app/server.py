@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import chunker, extract, pipeline
+from . import chunker, extract, parsers, pipeline
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 WORKERS = int(os.environ.get("STRATUM_WORKERS") or max(1, min(3, (os.cpu_count() or 2) // 2)))
@@ -36,23 +36,24 @@ _lock = threading.Lock()
 
 def _get_pool() -> ProcessPoolExecutor:
     global _pool
-    if _pool is None:
-        os.environ.setdefault("STRATUM_OCR_THREADS", str(max(1, (os.cpu_count() or 2) // WORKERS)))
-        _pool = ProcessPoolExecutor(max_workers=WORKERS, mp_context=mp.get_context("spawn"),
-                                    initializer=extract.worker_init)
+    # 首次本地任务可能同时到达；共用任务锁确保只创建一个工作池。
+    with _lock:
+        if _pool is None:
+            os.environ.setdefault("STRATUM_OCR_THREADS", str(max(1, (os.cpu_count() or 2) // WORKERS)))
+            _pool = ProcessPoolExecutor(max_workers=WORKERS, mp_context=mp.get_context("spawn"),
+                                        initializer=extract.worker_init)
     return _pool
 
 
 @asynccontextmanager
 async def lifespan(_app):
+    global _pool
     WORK_DIR.mkdir(parents=True, exist_ok=True)
-    pool = _get_pool()
-    # 提前拉起工作进程并加载模型
-    for _ in range(WORKERS):
-        pool.submit(time.sleep, 0)
     threading.Thread(target=_cleanup_loop, daemon=True).start()
     yield
-    pool.shutdown(cancel_futures=True)
+    if _pool is not None:
+        _pool.shutdown(cancel_futures=True)
+        _pool = None
     shutil.rmtree(WORK_DIR, ignore_errors=True)
 
 
@@ -87,8 +88,11 @@ def _run_job(job_id: str):
 
         conv = pipeline.ConvertOptions.from_dict(job["convert_options"])
         copts = chunker.ChunkOptions.from_dict(job["chunk_options"])
-        out = pipeline.convert(job["pdf"], conv, copts, _get_pool(), WORKERS, progress)
+        backend = parsers.get_parser(conv.parser)
+        pool = _get_pool() if backend.uses_local_workers else None
+        out = pipeline.convert(job["pdf"], conv, copts, pool, WORKERS, progress)
         _update(job_id, status="done", stage="完成", elements=out["elements"], result=out["result"],
+                source_warnings=out["source_warnings"],
                 elapsed=round(time.time() - job["created"], 1))
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()
@@ -109,6 +113,11 @@ async def create_job(file: UploadFile = File(...), options: str = Form("{}")):
         opts = json.loads(options or "{}")
     except json.JSONDecodeError:
         raise HTTPException(400, "options 不是合法的 JSON")
+    try:
+        pipeline.ConvertOptions.from_dict(opts)
+        chunker.ChunkOptions.from_dict(opts)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
     name = Path(file.filename or "document.pdf").name
     job_id = uuid.uuid4().hex[:12]
     job_dir = WORK_DIR / job_id
@@ -172,7 +181,7 @@ def rechunk(job_id: str, body: RechunkBody):
     result = chunker.to_markdown(job["elements"], copts)
     old = job["result"]
     result["doc_stats"] = old.get("doc_stats", {})
-    result["warnings"] += [w for w in old.get("warnings", []) if "OCR" in w]
+    result["warnings"] = list(dict.fromkeys(job.get("source_warnings", []) + result["warnings"]))
     _update(job_id, result=result, chunk_options=body.options)
     return result
 
@@ -189,6 +198,11 @@ def defaults():
     from dataclasses import asdict
     return {**asdict(pipeline.ConvertOptions()), **asdict(chunker.ChunkOptions()), "workers": WORKERS,
             "max_upload_mb": MAX_UPLOAD_MB}
+
+
+@app.get("/api/parsers")
+def get_parsers():
+    return {"parsers": parsers.catalog()}
 
 
 @app.get("/api/health")

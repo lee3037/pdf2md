@@ -79,19 +79,31 @@ def _merge_two_header_rows(rows: list[list[str]]) -> list[list[str]]:
     return [header] + rows[2:]
 
 
-def normalize_table(raw_rows, ocr: bool = False, col_x: list | None = None) -> dict | None:
-    """返回 {"header", "rows", "col_x"}；无法构成表格时返回 None。col_x 为各列左边界，用于跨页续表对齐。"""
+def normalize_table(raw_rows, ocr: bool = False, col_x: list | None = None,
+                    explicit_grid: bool = False, header_rows: int = 1) -> dict | None:
+    """清洗表格；HTML 网格按明确的 header_rows 合并表头，不猜测数据列。"""
     if not raw_rows:
         return None
     width = max(len(r) for r in raw_rows)
     rows = [[_clean_cell(c, ocr) for c in r] + [""] * (width - len(r)) for r in raw_rows]
     xs = list(col_x) if col_x and len(col_x) == width else [None] * width
-    rows, xs = _drop_empty(rows, xs)
+    if explicit_grid:
+        header = []
+        for ci in range(width):
+            parts = []
+            for row in rows[:header_rows]:
+                if row[ci] and (not parts or row[ci] != parts[-1]):
+                    parts.append(row[ci])
+            header.append(" / ".join(parts))
+        rows = [header] + [row for row in rows[header_rows:] if any(row)]
+    else:
+        rows, xs = _drop_empty(rows, xs)
     if not rows:
         return None
-    rows, xs = _merge_complementary_columns(rows, xs)
-    rows, xs = _drop_duplicate_columns(rows, xs)
-    rows = _merge_header_rows(rows)
+    if not explicit_grid:
+        rows, xs = _merge_complementary_columns(rows, xs)
+        rows, xs = _drop_duplicate_columns(rows, xs)
+        rows = _merge_header_rows(rows)
     if len(rows) < 2 or len(rows[0]) < 2:
         return None
     return {"header": rows[0], "rows": rows[1:], "col_x": xs if all(x is not None for x in xs) else None}

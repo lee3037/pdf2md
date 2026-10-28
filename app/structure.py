@@ -6,6 +6,7 @@
     list:      {"type", "items": [{"text", "marker", "ordered", "depth"}], "pages"}
     table:     {"type", "header", "rows", "pages"}
     code:      {"type", "text", "pages"}
+    formula:   {"type", "text" (LaTeX), "pages"}
 """
 from __future__ import annotations
 
@@ -112,7 +113,7 @@ def _collect_blocks(pages):
     return blocks
 
 
-def _remove_headers_footers(blocks, n_pages, enabled: bool, stats: dict):
+def remove_headers_footers(blocks, n_pages, enabled: bool, stats: dict):
     if not enabled:
         for b in blocks:
             if b["cls"] in ("page-header", "page-footer"):
@@ -167,7 +168,11 @@ def _same_size(a, b) -> bool:
 
 
 def assign_heading_levels(headings: list[dict], toc: list | None = None):
-    """按“编号体例 + 出现顺序 + 字号”推断层级；有书签目录时以目录校正。"""
+    """按编号、顺序、已知字号分级，再用书签校正。
+
+    缺少字号时，无编号标题同为顶层，后续编号标题按编号体例嵌套。
+    不把坐标框的高度当成字号。已有字号的本地解析行为保持不变。
+    """
     size_clusters: list[float] = []
 
     def size_key(size):
@@ -179,9 +184,10 @@ def assign_heading_levels(headings: list[dict], toc: list | None = None):
 
     stack: list[dict] = []
     for h in headings:
+        size = h.get("size")
         key, rank = numbering_key(h["text"])
         if key is None:
-            key = size_key(h["size"])
+            key = size_key(size) if size is not None else "semantic:unnumbered"
         # 与仍在栈中的标题同名（如封面标题在正文首页重复出现）：视为同一层级
         tkey = strip_key(h["text"])
         idx = next((i for i, e in enumerate(stack) if e.get("text") == tkey), None)
@@ -196,12 +202,15 @@ def assign_heading_levels(headings: list[dict], toc: list | None = None):
                 top = stack[-1]
                 if top["rank"] is not None and rank is not None:
                     pop = top["rank"] >= rank
+                elif top["size"] is None or size is None:
+                    # 未编号的语义标题作为编号标题的锚点，不猜测字体层级。
+                    pop = rank is None or top["rank"] is not None
                 else:
-                    pop = not (top["size"] > h["size"] and not _same_size(top["size"], h["size"]))
+                    pop = not (top["size"] > size and not _same_size(top["size"], size))
                 if not pop:
                     break
                 stack.pop()
-            stack.append({"key": key, "rank": rank, "size": h["size"], "text": tkey})
+            stack.append({"key": key, "rank": rank, "size": size, "text": tkey})
             level = len(stack)
         h["level"] = level
 
@@ -256,6 +265,26 @@ def _make_list_item(text, page, bbox, size=None, ph=None):
         marker, ordered, body = "-", False, text
     return {"type": "list_item", "text": body, "marker": marker, "ordered": ordered,
             "pages": [page, page], "bbox": bbox, "fs": size, "ph": ph}
+
+
+def semantic_text_elements(text: str, pages: list[int], role: str | None = None) -> list[dict]:
+    """语义文本保留块边界；仅把明确的行首列表标记转换为列表项。"""
+    lines = text.splitlines()
+    if role or not any(_list_marker(line.strip()) for line in lines):
+        return [{"type": "paragraph", "text": text, "role": role, "pages": list(pages)}]
+    elements = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        marker = _list_marker(line)
+        if marker:
+            symbol, ordered, body = marker
+            elements.append({"type": "list_item", "text": body, "marker": symbol,
+                             "ordered": ordered, "pages": list(pages)})
+        else:
+            elements.append({"type": "paragraph", "text": line, "role": None, "pages": list(pages)})
+    return elements
 
 
 CAPTION_LINE_RE = re.compile(r"^(续?表|图|Table|TABLE|Fig\.?|Figure)\s*[A-Za-z]{0,3}\s*[-－—.]?\s*\d")
@@ -495,7 +524,10 @@ def _is_continuation(prev, nxt) -> bool:
     if nxt["pages"][0] == prev["pages"][1] + 1:
         return prev.get("last_on_page", False) and nxt.get("first_on_page", False)
     if nxt["pages"][0] == prev["pages"][1]:
-        pb, nb = prev["bbox"], nxt["bbox"]
+        pb, nb = prev.get("bbox"), nxt.get("bbox")
+        # 语义后端没有行级几何信息，只合并跨页段落。
+        if pb is None or nb is None:
+            return False
         # 跨栏：上一栏底部 → 下一栏顶部
         ph = prev.get("ph") or 842
         return pb[3] > ph * 0.7 and nb[1] < pb[1] - 20 and nb[0] > pb[0] + 50
@@ -551,7 +583,7 @@ def _merge_across(elements, stats):
                 marks.append([max(0, len(joined) - len(e["text"])), e["pages"][0]])
             prev["text"] = joined
             prev["pages"] = [prev["pages"][0], e["pages"][1]]
-            prev["bbox"] = e["bbox"]
+            prev["bbox"] = e.get("bbox")
             prev["last_on_page"] = e.get("last_on_page", False)
             stats["paragraphs_merged"] += 1
             # 夹在中间的脚注移到合并段落之后
@@ -624,13 +656,18 @@ def build_elements(pages: list[dict], toc: list | None = None, remove_header_foo
     stats = {"pages": len(pages), "ocr_pages": sum(1 for p in pages if p["ocr"]), "tables": 0,
              "tables_merged": 0, "paragraphs_merged": 0, "removed_header_footer": 0}
     blocks = _collect_blocks(pages)
-    blocks = _remove_headers_footers(blocks, len(pages), remove_header_footer, stats)
+    blocks = remove_headers_footers(blocks, len(pages), remove_header_footer, stats)
     style = BodyStyle(blocks)
     toc_keys = defaultdict(set)
     for _lvl, title, pg in toc or []:
         for p in (pg - 1, pg, pg + 1):
             toc_keys[p].add(strip_key(title))
     elements = _blocks_to_elements(blocks, style, toc_keys, stats)
+    return finalize_elements(elements, stats, toc)
+
+
+def finalize_elements(elements: list[dict], stats: dict, toc: list | None = None):
+    """共用文档级收尾；语义后端无需经过 _Flow 的行级重建。"""
     headings = [e for e in elements if e["type"] == "heading"]
     assign_heading_levels(headings, toc)
     elements = _merge_across(elements, stats)

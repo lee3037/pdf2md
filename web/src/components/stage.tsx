@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent } from "react"
+import { useEffect, useRef, useState, type DragEvent } from "react"
 import { Layers, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,8 @@ export interface Pending {
   path?: string
   done: number
   total: number
+  /** 任务已成功；等进度播放完成后再显示结果。 */
+  onComplete?: () => void
 }
 
 /** 未加载文档时的主区域：拖入或点击选择 PDF。 */
@@ -92,10 +94,34 @@ const formatBytes = (n: number) =>
   n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`
 
 /** 转换中的主区域：上传 → 逐页解析 → 分块。 */
-export function ConvertingStage({ file, done, total }: Pending) {
-  // 拿到页数说明上传已完成；全部页面解析完后只剩分块
-  const stage = total === 0 ? 0 : done < total ? 1 : 2
-  const label = ["正在上传", `正在解析 ${done} / ${total} 页`, "正在分块"][stage]
+export function ConvertingStage({ file, done, total, onComplete }: Pending) {
+  const [stage, setStage] = useState(0)
+  const [displayedPages, setDisplayedPages] = useState(0)
+
+  useEffect(() => {
+    let timer: number | undefined
+    if (stage === 0 && total > 0) {
+      timer = window.setTimeout(() => setStage(1), 450)
+    } else if (stage === 1) {
+      if (displayedPages < Math.min(done, total)) {
+        // 每次只前进一页；页数多时加快节奏，但不跳过中间数字。
+        const interval = Math.max(24, Math.min(120, 1600 / total))
+        timer = window.setTimeout(() => setDisplayedPages((pages) => pages + 1), interval)
+      } else if (displayedPages === total) {
+        // 等 StatusTracker 的 500 ms 进度线过渡结束，保留 n / n 页。
+        timer = window.setTimeout(() => setStage(2), 500)
+      }
+    } else if (stage === 2 && onComplete) {
+      timer = window.setTimeout(() => setStage(3), 500)
+    } else if (stage === 3 && onComplete) {
+      // 最后一枚完成图标有 200 ms 的入场动画。
+      timer = window.setTimeout(onComplete, 250)
+    }
+    return () => window.clearTimeout(timer)
+  }, [stage, displayedPages, done, total, onComplete])
+
+  const label = ["正在上传", `正在解析 ${displayedPages} / ${total} 页`, "正在分块", "处理完成"][stage]
+  const progress = stage === 1 ? displayedPages / total : stage === 2 && onComplete ? 1 : 0
 
   return (
     <div className="flex h-full items-center justify-center px-6 pb-16">
@@ -107,7 +133,7 @@ export function ConvertingStage({ file, done, total }: Pending) {
           medallionSize="sm"
           title={file.name}
         />
-        <StatusTracker activeIndex={stage} progress={stage === 1 ? done / total : 0} stages={STAGES} />
+        <StatusTracker activeIndex={stage} progress={progress} stages={STAGES} />
         <LoadingState label={label} />
       </div>
     </div>
